@@ -53,7 +53,7 @@ export interface RunRequest {
     dock: { position_tolerance_m: number; heading_tolerance_rad: number };
     timeout_s: number;
     controller_kind: "geometric" | "learned_collision_risk";
-    inference_backend?: "python-reference" | "native-naive";
+    inference_backend?: "python-reference" | "native-naive" | "native-blocked";
     model_artifact_version?: string | null;
     model_sha256?: string | null;
     risk_cutoff?: number | null;
@@ -106,7 +106,7 @@ export interface RunResult {
   model_sha256?: string | null;
   validation_evidence_reference?: string | null;
   validation_quality_gate_status?: "met" | "not_met" | null;
-  inference_backend?: "python-reference" | "native-naive" | null;
+  inference_backend?: "python-reference" | "native-naive" | "native-blocked" | null;
   runtime_provenance?: Record<string, string> | null;
   command_disagreements?: number | null;
   terminal_failure?: {
@@ -245,9 +245,7 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     setText(
       root,
       "runtime",
-      result.inference_backend
-        ? `${result.inference_backend} · disagreements ${result.command_disagreements ?? "not compared"} · ${result.runtime_provenance?.timing_provenance ?? "reference execution"}`
-        : "Not applicable",
+      formatRuntimeEvidence(result),
     );
     setText(
       root,
@@ -290,6 +288,20 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
             ...scenario.default_run_request.configuration,
             controller_kind: "learned_collision_risk",
             inference_backend: "native-naive",
+          },
+        }),
+      ),
+    );
+  root
+    .querySelector("[data-action='blocked']")!
+    .addEventListener("click", () =>
+      void run(() =>
+        api.run({
+          ...scenario.default_run_request,
+          configuration: {
+            ...scenario.default_run_request.configuration,
+            controller_kind: "learned_collision_risk",
+            inference_backend: "native-blocked",
           },
         }),
       ),
@@ -362,6 +374,31 @@ function formatConfiguration(request: RunRequest): string {
     `${humanize(configuration.controller_kind)} controller`,
     `${humanize(configuration.inference_backend ?? "python-reference")} inference`,
   ].join(" · ");
+}
+
+function formatRuntimeEvidence(result: RunResult): string {
+  if (!result.inference_backend) return "Not applicable";
+  const provenance = result.runtime_provenance;
+  const parts = [
+    result.inference_backend,
+    `disagreements ${result.command_disagreements ?? "not compared"}`,
+    provenance?.timing_provenance ?? "reference execution",
+  ];
+  if (provenance?.comparison_correctness) {
+    parts.push(`correctness ${provenance.comparison_correctness}`);
+    parts.push(`${provenance.kernel} · block ${provenance.block_size}`);
+    parts.push(`input ${provenance.saved_input_sha256?.slice(0, 12)}…`);
+    parts.push(provenance.comparison_evidence ?? "comparison evidence unavailable");
+  }
+  if (
+    provenance?.comparison_correctness === "passed" &&
+    provenance.naive_median_us &&
+    provenance.blocked_median_us
+  ) {
+    parts.push(`naive ${provenance.naive_median_us} µs median`);
+    parts.push(`blocked ${provenance.blocked_median_us} µs median`);
+  }
+  return parts.join(" · ");
 }
 
 function drawScene(
@@ -467,6 +504,7 @@ function applicationMarkup(): string {
         <button data-action="start">Start run</button>
         <button data-action="learned">Run learned controller</button>
         <button data-action="native">Run native naive</button>
+        <button data-action="blocked">Run native blocked</button>
         <button data-action="timeout" class="secondary">Run expected timeout</button>
       </div>
     </section>

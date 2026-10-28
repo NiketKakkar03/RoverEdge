@@ -15,6 +15,9 @@ using Matrix = std::vector<std::vector<float>>;
 
 namespace {
 
+void blocked_matmul_into(const Matrix& left, const Matrix& right, Matrix& output,
+                         std::size_t block_size);
+
 void validate_matrix(const Matrix& matrix, const std::string& name) {
   if (matrix.empty() || matrix.front().empty()) {
     throw std::invalid_argument(name + " must be a nonempty rectangular matrix");
@@ -48,6 +51,18 @@ Matrix matmul(const Matrix& left, const Matrix& right) {
   return output;
 }
 
+Matrix blocked_matmul(const Matrix& left, const Matrix& right, std::size_t block_size) {
+  validate_matrix(left, "left operand");
+  validate_matrix(right, "right operand");
+  if (block_size == 0) throw std::invalid_argument("block size must be positive");
+  if (left.front().size() != right.size()) {
+    throw std::invalid_argument("matrix dimensions do not align");
+  }
+  Matrix output(left.size(), std::vector<float>(right.front().size(), 0.0F));
+  blocked_matmul_into(left, right, output, block_size);
+  return output;
+}
+
 void matmul_into(const Matrix& left, const Matrix& right, Matrix& output) {
   if (left.empty() || right.empty() || left.front().size() != right.size() ||
       output.size() != left.size() || output.front().size() != right.front().size()) {
@@ -59,6 +74,34 @@ void matmul_into(const Matrix& left, const Matrix& right, Matrix& output) {
       const float left_value = left[row][inner];
       for (std::size_t column = 0; column < right.front().size(); ++column) {
         output[row][column] += left_value * right[inner][column];
+      }
+    }
+  }
+}
+
+void blocked_matmul_into(const Matrix& left, const Matrix& right, Matrix& output,
+                         std::size_t block_size) {
+  if (block_size == 0) throw std::invalid_argument("block size must be positive");
+  if (left.empty() || right.empty() || left.front().size() != right.size() ||
+      output.size() != left.size() || output.front().size() != right.front().size()) {
+    throw std::invalid_argument("matrix workspace dimensions do not align");
+  }
+  for (auto& row : output) std::fill(row.begin(), row.end(), 0.0F);
+  for (std::size_t row_block = 0; row_block < left.size(); row_block += block_size) {
+    for (std::size_t inner_block = 0; inner_block < right.size(); inner_block += block_size) {
+      for (std::size_t column_block = 0; column_block < right.front().size();
+           column_block += block_size) {
+        const auto row_end = std::min(row_block + block_size, left.size());
+        const auto inner_end = std::min(inner_block + block_size, right.size());
+        const auto column_end = std::min(column_block + block_size, right.front().size());
+        for (std::size_t row = row_block; row < row_end; ++row) {
+          for (std::size_t inner = inner_block; inner < inner_end; ++inner) {
+            const float left_value = left[row][inner];
+            for (std::size_t column = column_block; column < column_end; ++column) {
+              output[row][column] += left_value * right[inner][column];
+            }
+          }
+        }
       }
     }
   }
@@ -92,7 +135,8 @@ void add_bias_and_relu(Matrix& values, const std::vector<float>& bias, bool relu
 class NativeRiskModel {
  public:
   NativeRiskModel(std::vector<float> mean, std::vector<float> scale,
-                  std::vector<Matrix> weights, std::vector<std::vector<float>> biases)
+                  std::vector<Matrix> weights, std::vector<std::vector<float>> biases,
+                  std::string backend, std::size_t block_size)
       : mean_(std::move(mean)),
         scale_(std::move(scale)),
         biases_(std::move(biases)),
@@ -101,11 +145,17 @@ class NativeRiskModel {
         hidden_two_(8, std::vector<float>(32)),
         logit_matrix_(8, std::vector<float>(1)),
         logits_(8),
-        scores_(8) {
+        scores_(8),
+        backend_(std::move(backend)),
+        block_size_(block_size) {
     if (mean_.size() != 24 || scale_.size() != 24 || weights.size() != 3 ||
         biases_.size() != 3) {
       throw std::invalid_argument("model dimensions do not match 24-64-32-1");
     }
+    if (backend_ != "native-naive" && backend_ != "native-blocked") {
+      throw std::invalid_argument("unsupported native inference backend");
+    }
+    if (block_size_ == 0) throw std::invalid_argument("block size must be positive");
     for (float value : mean_) {
       if (!std::isfinite(value)) throw std::invalid_argument("normalization must be finite");
     }
@@ -144,11 +194,11 @@ class NativeRiskModel {
         normalized_[row][index] = (batch[row][index] - mean_[index]) / scale_[index];
       }
     }
-    matmul_into(normalized_, weights_[0], hidden_one_);
+    multiply_into(normalized_, weights_[0], hidden_one_);
     add_bias_and_relu(hidden_one_, biases_[0], true);
-    matmul_into(hidden_one_, weights_[1], hidden_two_);
+    multiply_into(hidden_one_, weights_[1], hidden_two_);
     add_bias_and_relu(hidden_two_, biases_[1], true);
-    matmul_into(hidden_two_, weights_[2], logit_matrix_);
+    multiply_into(hidden_two_, weights_[2], logit_matrix_);
     for (std::size_t row = 0; row < batch.size(); ++row) {
       logits_[row] = logit_matrix_[row][0] + biases_[2][0];
       scores_[row] = 1.0F / (1.0F + std::exp(-logits_[row]));
@@ -163,6 +213,14 @@ class NativeRiskModel {
   }
 
  private:
+  void multiply_into(const Matrix& left, const Matrix& right, Matrix& output) {
+    if (backend_ == "native-blocked") {
+      blocked_matmul_into(left, right, output, block_size_);
+    } else {
+      matmul_into(left, right, output);
+    }
+  }
+
   std::vector<float> mean_;
   std::vector<float> scale_;
   std::vector<Matrix> weights_;
@@ -173,6 +231,8 @@ class NativeRiskModel {
   Matrix logit_matrix_;
   std::vector<float> logits_;
   std::vector<float> scores_;
+  std::string backend_;
+  std::size_t block_size_;
   std::mutex workspace_mutex_;
 };
 
@@ -181,15 +241,21 @@ class NativeRiskModel {
 PYBIND11_MODULE(_native_runtime, module) {
   module.doc() = "RoverEdge fresh naive FP32 runtime";
   module.def("naive_matmul", &matmul, py::arg("left"), py::arg("right"));
-  module.def("runtime_metadata", []() {
+  module.def("blocked_matmul", &blocked_matmul, py::arg("left"), py::arg("right"),
+             py::arg("block_size"));
+  module.def("runtime_metadata", [](const std::string& backend, std::size_t block_size) {
     py::dict metadata;
     metadata["compiler"] = __VERSION__;
     metadata["cxx_standard"] = "C++20";
-    metadata["kernel"] = "fresh-naive-fp32-v1";
+    metadata["kernel"] =
+        backend == "native-blocked" ? "fresh-blocked-fp32-v1" : "fresh-naive-fp32-v1";
+    metadata["block_size"] = std::to_string(block_size);
     return metadata;
-  });
+  }, py::arg("backend"), py::arg("block_size"));
   py::class_<NativeRiskModel>(module, "NativeRiskModel")
       .def(py::init<std::vector<float>, std::vector<float>, std::vector<Matrix>,
-                    std::vector<std::vector<float>>>())
+                    std::vector<std::vector<float>>, std::string, std::size_t>(),
+           py::arg("mean"), py::arg("scale"), py::arg("weights"), py::arg("biases"),
+           py::arg("backend") = "native-naive", py::arg("block_size") = 16)
       .def("evaluate", &NativeRiskModel::evaluate, py::call_guard<py::gil_scoped_release>());
 }

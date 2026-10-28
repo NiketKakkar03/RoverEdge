@@ -16,7 +16,7 @@ EventKind = Literal[
     "control_decision",
 ]
 ControllerKind = Literal["geometric", "learned_collision_risk"]
-InferenceBackend = Literal["python-reference", "native-naive"]
+InferenceBackend = Literal["python-reference", "native-naive", "native-blocked"]
 MissionPhase = Literal[
     "approaching_target",
     "aligning_to_target",

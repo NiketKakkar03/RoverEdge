@@ -89,6 +89,31 @@ def test_native_naive_learned_mission_records_runtime_provenance() -> None:
     assert result.command_disagreements == 0
 
 
+def test_native_blocked_learned_mission_records_backend_configuration() -> None:
+    request = physical_run_request("preset-open-v2")
+    request = replace(
+        request,
+        configuration=replace(
+            request.configuration,
+            controller_kind="learned_collision_risk",
+            inference_backend="native-blocked",
+        ),
+    )
+
+    result = run_experiment(request)
+
+    assert result.mission_outcome == "completed"
+    assert result.inference_backend == "native-blocked"
+    assert result.runtime_provenance is not None
+    assert result.runtime_provenance["kernel"] == "fresh-blocked-fp32-v1"
+    assert result.runtime_provenance["block_size"] == "16"
+    assert result.runtime_provenance["comparison_correctness"] == "passed"
+    assert result.runtime_provenance["timing_provenance"] == "measured_saved_input_replay"
+    assert float(result.runtime_provenance["naive_median_us"]) > 0
+    assert float(result.runtime_provenance["blocked_median_us"]) > 0
+    assert result.command_disagreements == 0
+
+
 @pytest.mark.parametrize("scenario_version", ["preset-narrow-v1", "preset-cluttered-v1"])
 def test_obstacle_presets_plan_reproducible_routes_and_complete(scenario_version: str) -> None:
     result = run_experiment(physical_run_request(scenario_version))

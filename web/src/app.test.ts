@@ -352,6 +352,55 @@ describe("mission replay application", () => {
     );
   });
 
+  test("displays the correctness-gated blocked versus naive latency comparison", async () => {
+    const blockedResult: RunResult = {
+      ...result,
+      request: {
+        ...result.request,
+        configuration: {
+          ...result.request.configuration,
+          controller_kind: "learned_collision_risk",
+          inference_backend: "native-blocked",
+        },
+      },
+      controller_kind: "learned_collision_risk",
+      inference_backend: "native-blocked",
+      command_disagreements: 0,
+      runtime_provenance: {
+        comparison_correctness: "passed",
+        timing_provenance: "measured_saved_input_replay",
+        kernel: "fresh-blocked-fp32-v1",
+        block_size: "16",
+        saved_input_sha256: "007cd77405e48b5ed82d6b5c21b3ef1",
+        comparison_evidence: "artifacts/issue-10/native-blocked-comparison.json",
+        naive_median_us: "210.167",
+        blocked_median_us: "194.542",
+      },
+    };
+    const run = vi.fn(async () => blockedResult);
+    const api: RoverEdgeApi = { getScenarios: async () => [scenario], run };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='blocked']")!);
+
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(root.querySelector("[data-field='runtime']")?.textContent).toContain(
+      "measured_saved_input_replay",
+    );
+    expect(root.querySelector("[data-field='runtime']")?.textContent).toContain(
+      "naive 210.167 µs median · blocked 194.542 µs median",
+    );
+    expect(root.querySelector("[data-field='runtime']")?.textContent).toContain(
+      "correctness passed · fresh-blocked-fp32-v1 · block 16",
+    );
+    expect(root.querySelector("[data-field='runtime']")?.textContent).toContain(
+      "artifacts/issue-10/native-blocked-comparison.json",
+    );
+  });
+
   test("displays recorded physical failure evidence", async () => {
     const collisionScenario: Scenario = {
       ...scenario,
