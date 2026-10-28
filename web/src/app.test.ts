@@ -456,6 +456,106 @@ describe("mission replay application", () => {
     );
   });
 
+  test("runs Accelerate and labels the recorded M1 comparison", async () => {
+    const accelerateResult: RunResult = {
+      ...result,
+      request: {
+        ...result.request,
+        configuration: {
+          ...result.request.configuration,
+          controller_kind: "learned_collision_risk",
+          inference_backend: "native-accelerate",
+        },
+      },
+      controller_kind: "learned_collision_risk",
+      inference_backend: "native-accelerate",
+      command_disagreements: 0,
+      runtime_provenance: {
+        accelerate_available: "true",
+        comparison_correctness: "passed",
+        timing_provenance: "measured_saved_input_replay",
+        kernel: "apple-accelerate-cblas-sgemm",
+        block_size: "16",
+        saved_input_sha256: "007cd77405e48b5ed82d6b5c21b3ef1",
+        comparison_evidence: "artifacts/issue-12/native-accelerate-comparison.json",
+        recorded_hardware_model: "Apple M1 Pro",
+        naive_median_us: "25.416",
+        accelerate_median_us: "24.042",
+      },
+    };
+    const run = vi.fn(async () => accelerateResult);
+    const api: RoverEdgeApi = {
+      getScenarios: async () => [scenario],
+      getAccelerateComparison: async () => ({
+        available_locally: true,
+        recorded_result: {
+          hardware_model: "Apple M1 Pro",
+          correctness_gate: "passed",
+          timing_provenance: "measured_saved_input_replay",
+          latency: {
+            "native-naive": { median_us: 25.416, samples: 3000 },
+            "native-accelerate": { median_us: 24.042, samples: 3000 },
+          },
+        },
+      }),
+      run,
+    };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='accelerate']")!);
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith({
+        ...scenario.default_run_request,
+        configuration: {
+          ...scenario.default_run_request.configuration,
+          controller_kind: "learned_collision_risk",
+          inference_backend: "native-accelerate",
+        },
+      }),
+    );
+    expect(root.querySelector("[data-field='runtime']")?.textContent).toContain(
+      "recorded Apple M1 Pro · naive 25.416 µs median · Accelerate 24.042 µs median",
+    );
+    expect(root.querySelector("[data-field='runtime']")?.textContent).toContain(
+      "artifacts/issue-12/native-accelerate-comparison.json",
+    );
+    expect(root.querySelector("[data-field='accelerate-comparison']")?.textContent).toContain(
+      "available locally · recorded Apple M1 Pro · correctness passed",
+    );
+  });
+
+  test("disables live Accelerate execution when the backend is unavailable", async () => {
+    const api: RoverEdgeApi = {
+      getScenarios: async () => [scenario],
+      getAccelerateComparison: async () => ({
+        available_locally: false,
+        recorded_result: {
+          hardware_model: "Apple M1 Pro",
+          correctness_gate: "passed",
+          timing_provenance: "measured_saved_input_replay",
+          latency: {
+            "native-naive": { median_us: 25.416, samples: 3000 },
+            "native-accelerate": { median_us: 24.042, samples: 3000 },
+          },
+        },
+      }),
+      run: vi.fn(async () => result),
+    };
+    document.body.innerHTML = '<main id="app"></main>';
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+
+    expect(root.querySelector<HTMLButtonElement>("[data-action='accelerate']")?.disabled).toBe(true);
+    expect(root.querySelector("[data-field='accelerate-comparison']")?.textContent).toContain(
+      "unavailable locally · recorded Apple M1 Pro",
+    );
+  });
+
   test("displays recorded physical failure evidence", async () => {
     const collisionScenario: Scenario = {
       ...scenario,
@@ -490,6 +590,20 @@ describe("mission replay application", () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(Response.json([scenario]))
+      .mockResolvedValueOnce(
+        Response.json({
+          available_locally: false,
+          recorded_result: {
+            hardware_model: "Apple M1 Pro",
+            correctness_gate: "passed",
+            timing_provenance: "measured_saved_input_replay",
+            latency: {
+              "native-naive": { median_us: 25.416, samples: 3000 },
+              "native-accelerate": { median_us: 24.042, samples: 3000 },
+            },
+          },
+        }),
+      )
       .mockResolvedValueOnce(Response.json(result));
     vi.stubGlobal("fetch", fetchMock);
     document.body.innerHTML = '<main id="app"></main>';
@@ -498,11 +612,12 @@ describe("mission replay application", () => {
 
     await mountApp(root, httpApi);
     fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='start']")!);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/scenarios");
-    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/runs");
-    const requestOptions = fetchMock.mock.calls[1]?.[1];
+    expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/native-comparisons/accelerate");
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/runs");
+    const requestOptions = fetchMock.mock.calls[2]?.[1];
     expect(JSON.parse(String(requestOptions?.body))).toEqual(scenario.default_run_request);
     vi.unstubAllGlobals();
   });

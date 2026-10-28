@@ -1,4 +1,4 @@
-.PHONY: setup dev build-native compare-native-naive compare-native-blocked compare-native-parallel check train-risk-model
+.PHONY: setup dev build-native compare-native-naive compare-native-blocked compare-native-parallel compare-native-accelerate check train-risk-model
 
 setup:
 	uv sync
@@ -21,6 +21,9 @@ compare-native-blocked: build-native
 
 compare-native-parallel: build-native
 	uv run python scripts/compare_native_parallel.py
+
+compare-native-accelerate: build-native
+	uv run python scripts/compare_native_accelerate.py
 
 check: build-native
 	uv run pytest

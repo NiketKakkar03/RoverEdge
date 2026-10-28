@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from roveredge import physical_run_request, preset_run_request
 from roveredge.api import app
+from roveredge.native import accelerate_available
 
 
 def test_browser_api_runs_the_saved_preset_request() -> None:
@@ -79,3 +80,31 @@ def test_browser_api_lists_versioned_physical_scenarios_with_geometry() -> None:
         "y_max_m": 5.5,
     }
     assert narrow["default_run_request"] == asdict(physical_run_request("preset-narrow-v1"))
+
+
+def test_browser_api_labels_recorded_accelerate_evidence_and_local_availability() -> None:
+    client = TestClient(app)
+
+    response = client.get("/api/native-comparisons/accelerate")
+
+    assert response.status_code == 200
+    evidence = response.json()
+    assert evidence["available_locally"] is accelerate_available()
+    assert evidence["recorded_result"]["hardware_model"] == "Apple M1 Pro"
+    assert evidence["recorded_result"]["correctness_gate"] == "passed"
+    assert evidence["recorded_result"]["timing_provenance"] == "measured_saved_input_replay"
+    assert evidence["recorded_result"]["latency"]["native-accelerate"]["samples"] == 3000
+
+
+def test_browser_api_reports_unavailable_native_backend(monkeypatch) -> None:
+    client = TestClient(app)
+
+    def unavailable(_request) -> None:
+        raise ValueError("Apple Accelerate backend is unavailable on this host")
+
+    monkeypatch.setattr("roveredge.api.run_experiment", unavailable)
+
+    response = client.post("/api/runs", json=asdict(preset_run_request()))
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Apple Accelerate backend is unavailable on this host"

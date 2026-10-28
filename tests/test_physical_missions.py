@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 
 from roveredge import physical_run_request, run_experiment
+from roveredge.native import accelerate_available
 
 
 def test_open_scenario_completes_under_declared_dynamics() -> None:
@@ -149,6 +150,35 @@ def test_parallel_blocked_rejects_unsupported_worker_count() -> None:
             inference_backend="native-parallel-blocked",
             inference_workers=3,
         )
+
+
+def test_accelerate_mission_records_backend_availability() -> None:
+    if not accelerate_available():
+        pytest.skip("live Accelerate mission requires a supported Apple host")
+    request = physical_run_request("preset-open-v2")
+    request = replace(
+        request,
+        configuration=replace(
+            request.configuration,
+            controller_kind="learned_collision_risk",
+            inference_backend="native-accelerate",
+        ),
+    )
+
+    result = run_experiment(request)
+
+    assert result.mission_outcome == "completed"
+    assert result.inference_backend == "native-accelerate"
+    assert result.runtime_provenance is not None
+    assert result.runtime_provenance["kernel"] == "apple-accelerate-cblas-sgemm"
+    assert result.runtime_provenance["accelerate_available"] == "true"
+    assert result.runtime_provenance["hardware_model"] != "unknown"
+    assert result.runtime_provenance["comparison_correctness"] == "passed"
+    assert result.runtime_provenance["timing_provenance"] == "measured_saved_input_replay"
+    assert result.runtime_provenance["recorded_hardware_model"] == "Apple M1 Pro"
+    assert float(result.runtime_provenance["naive_median_us"]) > 0
+    assert float(result.runtime_provenance["accelerate_median_us"]) > 0
+    assert result.command_disagreements == 0
 
 
 @pytest.mark.parametrize("scenario_version", ["preset-narrow-v1", "preset-cluttered-v1"])
