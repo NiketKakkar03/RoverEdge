@@ -1,0 +1,126 @@
+{
+  "block_size": 16,
+  "build_type": "Release",
+  "command_disagreements": {
+    "1": [],
+    "2": [],
+    "4": []
+  },
+  "compiler_options": [
+    "-O3",
+    "-DNDEBUG",
+    "-std=c++20",
+    "-arch",
+    "arm64",
+    "-fPIC",
+    "-fvisibility=hidden",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-flto"
+  ],
+  "correctness_gate": "passed",
+  "final_test_status": "untouched",
+  "hardware_model": "Apple M1 Pro",
+  "interleaving": "backend order alternates by repetition; same batch within each sample",
+  "latency": {
+    "native-blocked": {
+      "mean_us": 25.291957,
+      "median_us": 24.416,
+      "minimum_us": 21.541,
+      "p95_us": 28.75,
+      "samples": 3000
+    },
+    "native-parallel-blocked-1": {
+      "mean_us": 120.50413733333333,
+      "median_us": 88.083,
+      "minimum_us": 73.167,
+      "p95_us": 175.583,
+      "samples": 3000
+    },
+    "native-parallel-blocked-2": {
+      "mean_us": 153.02131599999998,
+      "median_us": 116.708,
+      "minimum_us": 92.667,
+      "p95_us": 240.333,
+      "samples": 3000
+    },
+    "native-parallel-blocked-4": {
+      "mean_us": 243.44179699999998,
+      "median_us": 197.063,
+      "minimum_us": 142.0,
+      "p95_us": 359.791,
+      "samples": 3000
+    }
+  },
+  "machine_state": "not controlled; foreground local run with no recorded thermal, power, or background-load isolation",
+  "maximum_absolute_errors": {
+    "1": {
+      "hidden_one": 0.0,
+      "hidden_two": 0.0,
+      "logits": 0.0,
+      "scores": 0.0
+    },
+    "2": {
+      "hidden_one": 0.0,
+      "hidden_two": 0.0,
+      "logits": 0.0,
+      "scores": 0.0
+    },
+    "4": {
+      "hidden_one": 0.0,
+      "hidden_two": 0.0,
+      "logits": 0.0,
+      "scores": 0.0
+    }
+  },
+  "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
+  "performance_withheld_reason": null,
+  "persistent_thread_pool": "deferred",
+  "reference_backend": "native-blocked",
+  "repetitions": 3,
+  "runtime_provenance": {
+    "backend": "native-parallel-blocked",
+    "block_size": "16",
+    "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+    "cxx_standard": "C++20",
+    "kernel": "fresh-parallel-blocked-fp32-v1",
+    "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
+    "platform": "macOS-26.7-arm64-arm-64bit",
+    "timing_provenance": "measured_saved_input_replay",
+    "worker_count": "4"
+  },
+  "samples_per_backend_per_repetition": 1000,
+  "saved_input_artifact": "artifacts/issue-9/native-naive-inputs.json",
+  "saved_input_sha256": "007cd77405e48b5ed82d6b5c21b3ef113045a496c2e934ce436cc17bb818502e",
+  "timing_boundary": "Python call through binding, one warmed 8-candidate batch; parallel calls include per-layer thread creation and join",
+  "timing_provenance": "measured_saved_input_replay",
+  "tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(serial blocked)",
+  "tolerance_failure_counts": {
+    "1": {
+      "hidden_one": 0,
+      "hidden_two": 0,
+      "logits": 0,
+      "scores": 0
+    },
+    "2": {
+      "hidden_one": 0,
+      "hidden_two": 0,
+      "logits": 0,
+      "scores": 0
+    },
+    "4": {
+      "hidden_one": 0,
+      "hidden_two": 0,
+      "logits": 0,
+      "scores": 0
+    }
+  },
+  "version": "native-parallel-comparison-v1",
+  "warmup_batches_per_backend": 100,
+  "worker_counts": [
+    1,
+    2,
+    4
+  ]
+}

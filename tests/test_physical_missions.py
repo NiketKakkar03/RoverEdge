@@ -114,6 +114,43 @@ def test_native_blocked_learned_mission_records_backend_configuration() -> None:
     assert result.command_disagreements == 0
 
 
+def test_parallel_blocked_mission_records_worker_configuration() -> None:
+    request = physical_run_request("preset-open-v2")
+    request = replace(
+        request,
+        configuration=replace(
+            request.configuration,
+            controller_kind="learned_collision_risk",
+            inference_backend="native-parallel-blocked",
+            inference_workers=4,
+        ),
+    )
+
+    result = run_experiment(request)
+
+    assert result.mission_outcome == "completed"
+    assert result.request.configuration.inference_workers == 4
+    assert result.inference_backend == "native-parallel-blocked"
+    assert result.runtime_provenance is not None
+    assert result.runtime_provenance["kernel"] == "fresh-parallel-blocked-fp32-v1"
+    assert result.runtime_provenance["worker_count"] == "4"
+    assert result.runtime_provenance["comparison_correctness"] == "passed"
+    assert float(result.runtime_provenance["serial_blocked_median_us"]) > 0
+    assert float(result.runtime_provenance["parallel_median_us"]) > 0
+    assert result.command_disagreements == 0
+
+
+def test_parallel_blocked_rejects_unsupported_worker_count() -> None:
+    request = physical_run_request("preset-open-v2")
+
+    with pytest.raises(ValueError, match="supports 1, 2, or 4"):
+        replace(
+            request.configuration,
+            inference_backend="native-parallel-blocked",
+            inference_workers=3,
+        )
+
+
 @pytest.mark.parametrize("scenario_version", ["preset-narrow-v1", "preset-cluttered-v1"])
 def test_obstacle_presets_plan_reproducible_routes_and_complete(scenario_version: str) -> None:
     result = run_experiment(physical_run_request(scenario_version))

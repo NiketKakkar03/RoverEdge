@@ -1,12 +1,20 @@
 import math
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from pathlib import Path
+from threading import Barrier
 
 import numpy as np
 import pytest
 
 from roveredge.learning import CANDIDATE_COMMANDS, load_risk_model, select_candidate
-from roveredge.native import NativeRiskModel, blocked_matmul, naive_matmul
+from roveredge.native import (
+    NativeInferenceResult,
+    NativeRiskModel,
+    blocked_matmul,
+    naive_matmul,
+    parallel_blocked_matmul,
+)
 
 
 def test_naive_matmul_supports_rectangular_products() -> None:
@@ -28,6 +36,19 @@ def test_blocked_matmul_handles_rectangular_block_tails() -> None:
         blocked_matmul(left, right, block_size=0)
 
 
+@pytest.mark.parametrize("worker_count", [1, 2, 4])
+def test_parallel_blocked_matmul_handles_rectangular_tails(worker_count: int) -> None:
+    left = tuple(tuple(float(row * 7 + column) / 10 for column in range(7)) for row in range(5))
+    right = tuple(tuple(float(row - column) / 7 for column in range(3)) for row in range(7))
+
+    assert np.asarray(
+        parallel_blocked_matmul(left, right, block_size=4, worker_count=worker_count)
+    ) == pytest.approx(np.asarray(naive_matmul(left, right)), rel=1e-4, abs=1e-5)
+
+    with pytest.raises(ValueError, match="worker count"):
+        parallel_blocked_matmul(left, right, block_size=4, worker_count=0)
+
+
 @pytest.mark.parametrize(
     ("left", "right", "message"),
     [
@@ -41,10 +62,21 @@ def test_naive_matmul_rejects_invalid_inputs(left, right, message: str) -> None:
         naive_matmul(left, right)
 
 
-@pytest.mark.parametrize("backend", ["native-naive", "native-blocked"])
-def test_native_layers_logits_scores_and_commands_match_reference(backend: str) -> None:
+@pytest.mark.parametrize(
+    ("backend", "worker_count"),
+    [
+        ("native-naive", 1),
+        ("native-blocked", 1),
+        ("native-parallel-blocked", 1),
+        ("native-parallel-blocked", 2),
+        ("native-parallel-blocked", 4),
+    ],
+)
+def test_native_layers_logits_scores_and_commands_match_reference(
+    backend: str, worker_count: int
+) -> None:
     artifact = load_risk_model(Path("artifacts/issue-8/risk-model-v1.json"))
-    runtime = NativeRiskModel(artifact, backend=backend)
+    runtime = NativeRiskModel(artifact, backend=backend, worker_count=worker_count)
     batch = tuple(
         tuple(1.0 + index * 0.01 for index in range(16))
         + (0.2, -0.1, 2.0, 0.25, candidate.linear_velocity_mps,
@@ -86,6 +118,33 @@ def test_native_runtime_rejects_nonfinite_batch() -> None:
 
     with pytest.raises(ValueError, match="finite"):
         runtime.evaluate(batch)
+
+
+def test_parallel_runtime_prevents_overlapping_workspace_use() -> None:
+    artifact = load_risk_model(Path("artifacts/issue-8/risk-model-v1.json"))
+    runtime = NativeRiskModel(
+        artifact, backend="native-parallel-blocked", worker_count=4
+    )
+    batch = tuple((0.0,) * 24 for _ in range(8))
+    expected = runtime.evaluate(batch)
+    barrier = Barrier(16)
+
+    def evaluate_together() -> NativeInferenceResult | RuntimeError:
+        barrier.wait()
+        try:
+            return runtime.evaluate(batch)
+        except RuntimeError as error:
+            return error
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        results = tuple(executor.map(lambda _: evaluate_together(), range(16)))
+
+    completed = tuple(result for result in results if not isinstance(result, RuntimeError))
+    rejected = tuple(result for result in results if isinstance(result, RuntimeError))
+    assert completed
+    assert rejected
+    assert all(result == expected for result in completed)
+    assert all("workspace is already in use" in str(error) for error in rejected)
 
 
 @pytest.mark.parametrize("corruption", ["shape", "normalization", "bias"])

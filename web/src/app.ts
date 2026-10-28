@@ -53,7 +53,12 @@ export interface RunRequest {
     dock: { position_tolerance_m: number; heading_tolerance_rad: number };
     timeout_s: number;
     controller_kind: "geometric" | "learned_collision_risk";
-    inference_backend?: "python-reference" | "native-naive" | "native-blocked";
+    inference_backend?:
+      | "python-reference"
+      | "native-naive"
+      | "native-blocked"
+      | "native-parallel-blocked";
+    inference_workers?: number;
     model_artifact_version?: string | null;
     model_sha256?: string | null;
     risk_cutoff?: number | null;
@@ -106,7 +111,12 @@ export interface RunResult {
   model_sha256?: string | null;
   validation_evidence_reference?: string | null;
   validation_quality_gate_status?: "met" | "not_met" | null;
-  inference_backend?: "python-reference" | "native-naive" | "native-blocked" | null;
+  inference_backend?:
+    | "python-reference"
+    | "native-naive"
+    | "native-blocked"
+    | "native-parallel-blocked"
+    | null;
   runtime_provenance?: Record<string, string> | null;
   command_disagreements?: number | null;
   terminal_failure?: {
@@ -306,6 +316,21 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
         }),
       ),
     );
+  root
+    .querySelector("[data-action='parallel']")!
+    .addEventListener("click", () =>
+      void run(() =>
+        api.run({
+          ...scenario.default_run_request,
+          configuration: {
+            ...scenario.default_run_request.configuration,
+            controller_kind: "learned_collision_risk",
+            inference_backend: "native-parallel-blocked",
+            inference_workers: 4,
+          },
+        }),
+      ),
+    );
   selector.addEventListener("change", () => {
     scenario = scenarios.find((item) => item.scenario_version === selector.value)!;
     showScenario();
@@ -373,6 +398,7 @@ function formatConfiguration(request: RunRequest): string {
     `${configuration.timeout_s} s timeout`,
     `${humanize(configuration.controller_kind)} controller`,
     `${humanize(configuration.inference_backend ?? "python-reference")} inference`,
+    `${configuration.inference_workers ?? 1} inference worker(s)`,
   ].join(" · ");
 }
 
@@ -397,6 +423,15 @@ function formatRuntimeEvidence(result: RunResult): string {
   ) {
     parts.push(`naive ${provenance.naive_median_us} µs median`);
     parts.push(`blocked ${provenance.blocked_median_us} µs median`);
+  }
+  if (
+    provenance?.comparison_correctness === "passed" &&
+    provenance.serial_blocked_median_us &&
+    provenance.parallel_median_us
+  ) {
+    parts.push(`workers ${provenance.worker_count}`);
+    parts.push(`serial blocked ${provenance.serial_blocked_median_us} µs median`);
+    parts.push(`parallel ${provenance.parallel_median_us} µs median`);
   }
   return parts.join(" · ");
 }
@@ -505,6 +540,7 @@ function applicationMarkup(): string {
         <button data-action="learned">Run learned controller</button>
         <button data-action="native">Run native naive</button>
         <button data-action="blocked">Run native blocked</button>
+        <button data-action="parallel">Run native parallel (4 workers)</button>
         <button data-action="timeout" class="secondary">Run expected timeout</button>
       </div>
     </section>

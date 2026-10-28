@@ -4,6 +4,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -17,6 +18,8 @@ namespace {
 
 void blocked_matmul_into(const Matrix& left, const Matrix& right, Matrix& output,
                          std::size_t block_size);
+void parallel_blocked_matmul_into(const Matrix& left, const Matrix& right, Matrix& output,
+                                  std::size_t block_size, std::size_t worker_count);
 
 void validate_matrix(const Matrix& matrix, const std::string& name) {
   if (matrix.empty() || matrix.front().empty()) {
@@ -61,6 +64,61 @@ Matrix blocked_matmul(const Matrix& left, const Matrix& right, std::size_t block
   Matrix output(left.size(), std::vector<float>(right.front().size(), 0.0F));
   blocked_matmul_into(left, right, output, block_size);
   return output;
+}
+
+Matrix parallel_blocked_matmul(const Matrix& left, const Matrix& right,
+                               std::size_t block_size, std::size_t worker_count) {
+  validate_matrix(left, "left operand");
+  validate_matrix(right, "right operand");
+  if (block_size == 0) throw std::invalid_argument("block size must be positive");
+  if (worker_count == 0) throw std::invalid_argument("worker count must be positive");
+  if (left.front().size() != right.size()) {
+    throw std::invalid_argument("matrix dimensions do not align");
+  }
+  Matrix output(left.size(), std::vector<float>(right.front().size(), 0.0F));
+  parallel_blocked_matmul_into(left, right, output, block_size, worker_count);
+  return output;
+}
+
+void parallel_blocked_matmul_into(const Matrix& left, const Matrix& right, Matrix& output,
+                                  std::size_t block_size, std::size_t worker_count) {
+  if (block_size == 0) throw std::invalid_argument("block size must be positive");
+  if (worker_count == 0) throw std::invalid_argument("worker count must be positive");
+  if (left.empty() || right.empty() || left.front().size() != right.size() ||
+      output.size() != left.size() || output.front().size() != right.front().size()) {
+    throw std::invalid_argument("matrix workspace dimensions do not align");
+  }
+  for (auto& row : output) std::fill(row.begin(), row.end(), 0.0F);
+  const auto workers = std::min(worker_count, left.size());
+  const auto rows_per_worker = (left.size() + workers - 1) / workers;
+  std::vector<std::jthread> threads;
+  threads.reserve(workers);
+  for (std::size_t worker = 0; worker < workers; ++worker) {
+    const auto row_begin = worker * rows_per_worker;
+    const auto row_end = std::min(row_begin + rows_per_worker, left.size());
+    if (row_begin == row_end) break;
+    threads.emplace_back([&, row_begin, row_end] {
+      for (std::size_t row_block = row_begin; row_block < row_end; row_block += block_size) {
+        for (std::size_t inner_block = 0; inner_block < right.size(); inner_block += block_size) {
+          for (std::size_t column_block = 0; column_block < right.front().size();
+               column_block += block_size) {
+            const auto block_row_end = std::min(row_block + block_size, row_end);
+            const auto inner_end = std::min(inner_block + block_size, right.size());
+            const auto column_end =
+                std::min(column_block + block_size, right.front().size());
+            for (std::size_t row = row_block; row < block_row_end; ++row) {
+              for (std::size_t inner = inner_block; inner < inner_end; ++inner) {
+                const float left_value = left[row][inner];
+                for (std::size_t column = column_block; column < column_end; ++column) {
+                  output[row][column] += left_value * right[inner][column];
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+  }
 }
 
 void matmul_into(const Matrix& left, const Matrix& right, Matrix& output) {
@@ -136,7 +194,7 @@ class NativeRiskModel {
  public:
   NativeRiskModel(std::vector<float> mean, std::vector<float> scale,
                   std::vector<Matrix> weights, std::vector<std::vector<float>> biases,
-                  std::string backend, std::size_t block_size)
+                  std::string backend, std::size_t block_size, std::size_t worker_count)
       : mean_(std::move(mean)),
         scale_(std::move(scale)),
         biases_(std::move(biases)),
@@ -147,15 +205,18 @@ class NativeRiskModel {
         logits_(8),
         scores_(8),
         backend_(std::move(backend)),
-        block_size_(block_size) {
+        block_size_(block_size),
+        worker_count_(worker_count) {
     if (mean_.size() != 24 || scale_.size() != 24 || weights.size() != 3 ||
         biases_.size() != 3) {
       throw std::invalid_argument("model dimensions do not match 24-64-32-1");
     }
-    if (backend_ != "native-naive" && backend_ != "native-blocked") {
+    if (backend_ != "native-naive" && backend_ != "native-blocked" &&
+        backend_ != "native-parallel-blocked") {
       throw std::invalid_argument("unsupported native inference backend");
     }
     if (block_size_ == 0) throw std::invalid_argument("block size must be positive");
+    if (worker_count_ == 0) throw std::invalid_argument("worker count must be positive");
     for (float value : mean_) {
       if (!std::isfinite(value)) throw std::invalid_argument("normalization must be finite");
     }
@@ -214,7 +275,9 @@ class NativeRiskModel {
 
  private:
   void multiply_into(const Matrix& left, const Matrix& right, Matrix& output) {
-    if (backend_ == "native-blocked") {
+    if (backend_ == "native-parallel-blocked") {
+      parallel_blocked_matmul_into(left, right, output, block_size_, worker_count_);
+    } else if (backend_ == "native-blocked") {
       blocked_matmul_into(left, right, output, block_size_);
     } else {
       matmul_into(left, right, output);
@@ -233,6 +296,7 @@ class NativeRiskModel {
   std::vector<float> scores_;
   std::string backend_;
   std::size_t block_size_;
+  std::size_t worker_count_;
   std::mutex workspace_mutex_;
 };
 
@@ -243,19 +307,27 @@ PYBIND11_MODULE(_native_runtime, module) {
   module.def("naive_matmul", &matmul, py::arg("left"), py::arg("right"));
   module.def("blocked_matmul", &blocked_matmul, py::arg("left"), py::arg("right"),
              py::arg("block_size"));
-  module.def("runtime_metadata", [](const std::string& backend, std::size_t block_size) {
+  module.def("parallel_blocked_matmul", &parallel_blocked_matmul, py::arg("left"),
+             py::arg("right"), py::arg("block_size"), py::arg("worker_count"));
+  module.def("runtime_metadata", [](const std::string& backend, std::size_t block_size,
+                                    std::size_t worker_count) {
     py::dict metadata;
     metadata["compiler"] = __VERSION__;
     metadata["cxx_standard"] = "C++20";
-    metadata["kernel"] =
-        backend == "native-blocked" ? "fresh-blocked-fp32-v1" : "fresh-naive-fp32-v1";
+    metadata["kernel"] = backend == "native-parallel-blocked"
+                             ? "fresh-parallel-blocked-fp32-v1"
+                         : backend == "native-blocked" ? "fresh-blocked-fp32-v1"
+                                                       : "fresh-naive-fp32-v1";
     metadata["block_size"] = std::to_string(block_size);
+    metadata["worker_count"] = std::to_string(worker_count);
     return metadata;
-  }, py::arg("backend"), py::arg("block_size"));
+  }, py::arg("backend"), py::arg("block_size"), py::arg("worker_count"));
   py::class_<NativeRiskModel>(module, "NativeRiskModel")
       .def(py::init<std::vector<float>, std::vector<float>, std::vector<Matrix>,
-                    std::vector<std::vector<float>>, std::string, std::size_t>(),
+                    std::vector<std::vector<float>>, std::string, std::size_t,
+                    std::size_t>(),
            py::arg("mean"), py::arg("scale"), py::arg("weights"), py::arg("biases"),
-           py::arg("backend") = "native-naive", py::arg("block_size") = 16)
+           py::arg("backend") = "native-naive", py::arg("block_size") = 16,
+           py::arg("worker_count") = 1)
       .def("evaluate", &NativeRiskModel::evaluate, py::call_guard<py::gil_scoped_release>());
 }
