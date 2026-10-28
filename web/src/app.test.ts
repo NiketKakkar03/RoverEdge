@@ -279,6 +279,9 @@ describe("mission replay application", () => {
               risk_cutoff: 0.25,
               observation_age_s: 0.05,
               timing_provenance: "modeled",
+              inference_event_kind: "consumed",
+              queue_depth: 1,
+              request_id: 7,
               detail: "acceptable candidate with maximum kinematic progress",
             }
           : event,
@@ -311,6 +314,9 @@ describe("mission replay application", () => {
     expect(root.querySelector("[data-field='decision']")?.textContent).toContain("cutoff 0.25");
     expect(root.querySelector("[data-field='prediction-age']")?.textContent).toBe(
       "0.050 s · modeled",
+    );
+    expect(root.querySelector("[data-field='queue-state']")?.textContent).toBe(
+      "consumed · depth 1 · request 7",
     );
   });
 

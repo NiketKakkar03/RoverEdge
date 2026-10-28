@@ -3,7 +3,7 @@ from dataclasses import replace
 import pytest
 
 from roveredge import physical_run_request, run_experiment
-from roveredge.device import ModeledDeviceProfile
+from roveredge.device import ModeledDeviceProfile, QueuePolicy
 from roveredge.native import accelerate_available
 
 
@@ -256,6 +256,64 @@ def test_delayed_virtual_fifo_records_overflow_and_expiry() -> None:
         event.inference_event_kind == "overflow" for event in result.trace
     )
     assert any(event.inference_event_kind == "expired" for event in result.trace)
+
+
+def test_uncongested_steady_and_burst_policy_pairs_preserve_actual_outcomes() -> None:
+    base = physical_run_request("preset-open-v2")
+
+    def run(policy: QueuePolicy, compute_s: float, requests_per_tick: int, timeout_s: float):
+        return run_experiment(
+            replace(
+                base,
+                configuration=replace(
+                    base.configuration,
+                    controller_kind="learned_collision_risk",
+                    timeout_s=timeout_s,
+                    execution_mode="virtual_fifo",
+                    modeled_device=ModeledDeviceProfile(
+                        compute_s=compute_s,
+                        pending_capacity=2,
+                        maximum_age_s=0.3,
+                        queue_policy=policy,
+                        requests_per_tick=requests_per_tick,
+                    ),
+                ),
+                expected_mission_outcome=("completed" if timeout_s > 2 else "timed_out"),
+            )
+        )
+
+    uncongested = [run(policy, 0.005, 1, 120.0) for policy in ("fifo", "latest_pending")]
+    steady = [run(policy, 0.12, 1, 2.0) for policy in ("fifo", "latest_pending")]
+    burst = [run(policy, 0.02, 3, 2.0) for policy in ("fifo", "latest_pending")]
+
+    assert all(result.mission_outcome == "completed" for result in uncongested)
+    assert all(result.inference_summary is not None for result in uncongested)
+    assert all(
+        result.inference_summary["overflow"] == 0
+        for result in uncongested
+        if result.inference_summary
+    )
+    assert all(
+        result.inference_summary["replaced"] == 0
+        for result in uncongested
+        if result.inference_summary
+    )
+    assert uncongested[0].inference_summary == uncongested[1].inference_summary
+    fifo, latest = steady
+
+    assert fifo.inference_summary is not None
+    assert latest.inference_summary is not None
+    assert fifo.inference_summary["overflow"] > 0
+    assert fifo.inference_summary["replaced"] == 0
+    assert latest.inference_summary["overflow"] == 0
+    assert latest.inference_summary["replaced"] > 0
+    assert fifo.mission_outcome == latest.mission_outcome == "timed_out"
+    burst_fifo, burst_latest = burst
+    assert burst_fifo.inference_summary is not None
+    assert burst_latest.inference_summary is not None
+    assert burst_fifo.inference_summary["overflow"] > 0
+    assert burst_latest.inference_summary["replaced"] > 0
+    assert burst_fifo.mission_outcome == burst_latest.mission_outcome == "timed_out"
 
 
 @pytest.mark.parametrize("scenario_version", ["preset-narrow-v1", "preset-cluttered-v1"])

@@ -73,6 +73,8 @@ export interface RunRequest {
       pending_capacity: number;
       deadline_s: number;
       maximum_age_s: number;
+      queue_policy: "fifo" | "latest_pending";
+      requests_per_tick: number;
     };
   };
   expected_mission_outcome: "completed" | "timed_out" | "collision" | "unreachable";
@@ -109,6 +111,7 @@ interface TraceEvent extends ReplayEvent {
   observation_age_s?: number | null;
   modeled_event_time_s?: number | null;
   timing_provenance?: "modeled" | "measured" | null;
+  queue_wait_s?: number | null;
 }
 
 export interface RunResult {
@@ -263,6 +266,17 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
       "prediction-age",
       agedDecision?.observation_age_s != null
         ? `${agedDecision.observation_age_s.toFixed(3)} s · ${agedDecision.timing_provenance ?? "unknown"}`
+        : "Not available",
+    );
+    const queueEvent = result.trace
+      .slice(0, event.sequence + 1)
+      .reverse()
+      .find((item) => item.inference_event_kind != null);
+    setText(
+      root,
+      "queue-state",
+      queueEvent
+        ? `${queueEvent.inference_event_kind} · depth ${queueEvent.queue_depth ?? 0} · request ${queueEvent.request_id ?? "—"}`
         : "Not available",
     );
   };
@@ -654,6 +668,7 @@ function applicationMarkup(): string {
           <dt>Replay evidence</dt><dd data-field="replay-evidence">None</dd>
           <dt>Learned decision</dt><dd data-field="decision">None</dd>
           <dt>Prediction age</dt><dd data-field="prediction-age">Not available</dd>
+          <dt>Queue state</dt><dd data-field="queue-state">Not available</dd>
           <dt>Mission outcome</dt><dd data-field="outcome">—</dd>
           <dt>Test verdict</dt><dd data-field="verdict">—</dd>
           <dt>Terminal failure</dt><dd data-field="failure">None</dd>
