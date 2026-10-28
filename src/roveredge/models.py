@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Literal
 
+from .device import ModeledDeviceProfile
+
 MissionOutcome = Literal["completed", "timed_out", "collision", "unreachable"]
 TestVerdict = Literal["passed", "failed"]
 FailureCode = Literal["collision", "unreachable", "timeout"]
@@ -14,8 +16,10 @@ EventKind = Literal[
     "braking_started",
     "collision",
     "control_decision",
+    "inference_event",
 ]
 ControllerKind = Literal["geometric", "learned_collision_risk"]
+ExecutionMode = Literal["synchronous", "virtual_fifo"]
 InferenceBackend = Literal[
     "python-reference",
     "native-naive",
@@ -108,6 +112,8 @@ class RunConfiguration:
     model_sha256: str | None = None
     risk_cutoff: float | None = None
     candidate_set_id: str | None = None
+    execution_mode: ExecutionMode = "synchronous"
+    modeled_device: ModeledDeviceProfile = ModeledDeviceProfile()
 
     def __post_init__(self) -> None:
         if self.simulation_step_s <= 0:
@@ -162,6 +168,16 @@ class TraceEvent:
     risk_cutoff: float | None = None
     selected_risk: float | None = None
     selected_progress_score: float | None = None
+    inference_event_kind: str | None = None
+    request_id: int | None = None
+    observation_id: int | None = None
+    queue_depth: int | None = None
+    observation_age_s: float | None = None
+    modeled_event_time_s: float | None = None
+    timing_provenance: Literal["modeled", "measured"] | None = None
+    episode_id: str | None = None
+    event_candidate_set_id: str | None = None
+    event_model_sha256: str | None = None
 
 
 @dataclass(frozen=True)
@@ -200,3 +216,4 @@ class RunResult:
     inference_backend: InferenceBackend | None = None
     runtime_provenance: dict[str, str] | None = None
     command_disagreements: int | None = None
+    inference_summary: dict[str, int | float | str] | None = None

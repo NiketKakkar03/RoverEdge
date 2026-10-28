@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 
 from roveredge import physical_run_request, run_experiment
+from roveredge.device import ModeledDeviceProfile
 from roveredge.native import accelerate_available
 
 
@@ -179,6 +180,82 @@ def test_accelerate_mission_records_backend_availability() -> None:
     assert float(result.runtime_provenance["naive_median_us"]) > 0
     assert float(result.runtime_provenance["accelerate_median_us"]) > 0
     assert result.command_disagreements == 0
+
+
+def test_virtual_fifo_mission_replays_modeled_prediction_age() -> None:
+    request = physical_run_request("preset-open-v2")
+    request = replace(
+        request,
+        configuration=replace(
+            request.configuration,
+            controller_kind="learned_collision_risk",
+            execution_mode="virtual_fifo",
+            modeled_device=ModeledDeviceProfile(maximum_age_s=0.1),
+        ),
+    )
+
+    result = run_experiment(request)
+    repeated = run_experiment(request)
+
+    assert result.mission_outcome == "completed"
+    assert result.inference_summary is not None
+    assert result.inference_summary["timing_provenance"] == "modeled"
+    assert result.inference_summary["completed"] > 0
+    decisions = [event for event in result.trace if event.kind == "control_decision"]
+    assert decisions
+    assert all(event.observation_age_s == 0.05 for event in decisions)
+    assert all(event.timing_provenance == "modeled" for event in decisions)
+    inference_events = [
+        event for event in result.trace if event.inference_event_kind is not None
+    ]
+    first_completion = next(
+        index
+        for index, event in enumerate(inference_events)
+        if event.inference_event_kind == "completed"
+    )
+    assert [
+        event.inference_event_kind
+        for event in inference_events[first_completion : first_completion + 4]
+    ] == ["completed", "request_created", "consumed", "dispatched"]
+    assert result.inference_summary["deadline_misses"] == 0
+    episode_ids = {event.episode_id for event in inference_events}
+    assert len(episode_ids) == 1
+    assert next(iter(episode_ids)).startswith("episode-")
+    assert next(iter(episode_ids)) != request.scenario_version
+    assert all(event.event_candidate_set_id is not None for event in inference_events)
+    assert all(event.event_model_sha256 == result.model_sha256 for event in inference_events)
+    assert result.trace == repeated.trace
+    assert result.inference_summary == repeated.inference_summary
+
+
+def test_delayed_virtual_fifo_records_overflow_and_expiry() -> None:
+    request = physical_run_request("preset-open-v2")
+    request = replace(
+        request,
+        configuration=replace(
+            request.configuration,
+            controller_kind="learned_collision_risk",
+            timeout_s=2.0,
+            execution_mode="virtual_fifo",
+            modeled_device=ModeledDeviceProfile(
+                compute_s=0.2,
+                pending_capacity=2,
+                maximum_age_s=0.1,
+            ),
+        ),
+        expected_mission_outcome="timed_out",
+    )
+
+    result = run_experiment(request)
+
+    assert result.test_verdict == "passed"
+    assert result.inference_summary is not None
+    assert result.inference_summary["overflow"] > 0
+    assert result.inference_summary["expired"] > 0
+    assert any(
+        event.inference_event_kind == "overflow" for event in result.trace
+    )
+    assert any(event.inference_event_kind == "expired" for event in result.trace)
 
 
 @pytest.mark.parametrize("scenario_version", ["preset-narrow-v1", "preset-cluttered-v1"])
