@@ -16,6 +16,7 @@ EventKind = Literal[
     "control_decision",
 ]
 ControllerKind = Literal["geometric", "learned_collision_risk"]
+InferenceBackend = Literal["python-reference", "native-naive"]
 MissionPhase = Literal[
     "approaching_target",
     "aligning_to_target",
@@ -95,6 +96,7 @@ class RunConfiguration:
     dock: DockConfiguration = DockConfiguration()
     timeout_s: float = 120.0
     controller_kind: ControllerKind = "geometric"
+    inference_backend: InferenceBackend = "python-reference"
     model_artifact_version: str | None = None
     model_sha256: str | None = None
     risk_cutoff: float | None = None
@@ -181,3 +183,6 @@ class RunResult:
     model_sha256: str | None = None
     validation_evidence_reference: str | None = None
     validation_quality_gate_status: Literal["met", "not_met"] | None = None
+    inference_backend: InferenceBackend | None = None
+    runtime_provenance: dict[str, str] | None = None
+    command_disagreements: int | None = None

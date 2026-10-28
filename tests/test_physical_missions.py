@@ -68,6 +68,27 @@ def test_open_scenario_records_literal_range_rays_at_planning_cadence() -> None:
     )
 
 
+def test_native_naive_learned_mission_records_runtime_provenance() -> None:
+    request = physical_run_request("preset-open-v2")
+    request = replace(
+        request,
+        configuration=replace(
+            request.configuration,
+            controller_kind="learned_collision_risk",
+            inference_backend="native-naive",
+        ),
+    )
+
+    result = run_experiment(request)
+
+    assert result.mission_outcome == "completed"
+    assert result.inference_backend == "native-naive"
+    assert result.runtime_provenance is not None
+    assert result.runtime_provenance["timing_provenance"] == "not_measured"
+    assert result.runtime_provenance["model_sha256"] == result.model_sha256
+    assert result.command_disagreements == 0
+
+
 @pytest.mark.parametrize("scenario_version", ["preset-narrow-v1", "preset-cluttered-v1"])
 def test_obstacle_presets_plan_reproducible_routes_and_complete(scenario_version: str) -> None:
     result = run_experiment(physical_run_request(scenario_version))

@@ -28,6 +28,7 @@ from .models import (
     TestVerdict,
     TraceEvent,
 )
+from .native import NativeRiskModel, runtime_provenance
 from .planning import plan_route
 from .scenarios import Scenario, get_scenario, physical_run_request
 
@@ -49,6 +50,11 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
     if risk_model is not None:
         request = _freeze_learned_configuration(request, risk_model)
         configuration = request.configuration
+    native_model = (
+        NativeRiskModel(risk_model)
+        if risk_model is not None and configuration.inference_backend == "native-naive"
+        else None
+    )
     scenario = get_scenario(request.scenario_version)
     inflation = configuration.rover_radius_m + configuration.planning_clearance_m
     outbound_route = plan_route(
@@ -80,6 +86,7 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
     observations: list[InspectionObservation] = []
     sequence = 0
     braking = False
+    command_disagreements = 0
     latest_ranges: tuple[float, ...] | None = None
     route = outbound_route
     route_index = 1
@@ -245,15 +252,29 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                     previous_linear_command_mps=commanded_linear_velocity,
                     previous_angular_command_radps=commanded_angular_velocity,
                 )
-                risks = tuple(
-                    predict_risk(risk_model, build_feature_vector(learning_state, candidate))
+                feature_batch = tuple(
+                    build_feature_vector(learning_state, candidate)
                     for candidate in CANDIDATE_COMMANDS
+                )
+                reference_risks = tuple(
+                    predict_risk(risk_model, features) for features in feature_batch
+                )
+                risks = (
+                    native_model.evaluate(feature_batch).scores
+                    if native_model is not None
+                    else reference_risks
                 )
                 progress = tuple(
                     candidate_progress_score(waypoint_x, waypoint_y, candidate)
                     for candidate in CANDIDATE_COMMANDS
                 )
                 selection = select_candidate(risks, progress, risk_model.risk_cutoff)
+                if native_model is not None:
+                    reference_selection = select_candidate(
+                        reference_risks, progress, risk_model.risk_cutoff
+                    )
+                    if reference_selection.candidate_index != selection.candidate_index:
+                        command_disagreements += 1
                 desired_linear = selection.command.linear_velocity_mps
                 desired_angular = selection.command.angular_velocity_radps
                 record(
@@ -351,6 +372,13 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
             "artifacts/issue-8/validation-report.json" if risk_model is not None else None
         ),
         validation_quality_gate_status="not_met" if risk_model is not None else None,
+        inference_backend=(configuration.inference_backend if risk_model is not None else None),
+        runtime_provenance=(
+            runtime_provenance(risk_model.sha256)
+            if native_model is not None and risk_model is not None
+            else None
+        ),
+        command_disagreements=(command_disagreements if native_model is not None else None),
     )
 
 

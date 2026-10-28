@@ -1,0 +1,47 @@
+{
+  "candidate_batches": 192,
+  "command_disagreement_count": 0,
+  "command_disagreements": [],
+  "correctness_gate": "passed",
+  "maximum_absolute_errors": {
+    "hidden_one": 1.430511474609375e-06,
+    "hidden_two": 5.7220458984375e-06,
+    "logits": 3.0517578125e-05,
+    "scores": 2.2351741790771484e-06
+  },
+  "mission": {
+    "backend": "native-naive",
+    "command_disagreements": 0,
+    "outcome": "completed",
+    "scenario_version": "preset-open-v2",
+    "test_verdict": "passed"
+  },
+  "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
+  "numerical_agreement": "passed",
+  "performance_claim": "not measured",
+  "reproduction": [
+    "make build-native",
+    "make compare-native-naive"
+  ],
+  "runtime_provenance": {
+    "backend": "native-naive",
+    "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+    "cxx_standard": "C++20",
+    "kernel": "fresh-naive-fp32-v1",
+    "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
+    "platform": "macOS-26.7-arm64-arm-64bit",
+    "timing_provenance": "not_measured"
+  },
+  "saved_input_artifact": "artifacts/issue-9/native-naive-inputs.json",
+  "saved_input_sha256": "007cd77405e48b5ed82d6b5c21b3ef113045a496c2e934ce436cc17bb818502e",
+  "saved_input_source": "tracked issue-8 validation-family features; final-test untouched",
+  "states": 192,
+  "tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(reference)",
+  "tolerance_failure_counts": {
+    "hidden_one": 0,
+    "hidden_two": 0,
+    "logits": 0,
+    "scores": 0
+  },
+  "version": "native-naive-comparison-v1"
+}
