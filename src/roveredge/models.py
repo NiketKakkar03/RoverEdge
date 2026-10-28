@@ -178,6 +178,7 @@ class TraceEvent:
     episode_id: str | None = None
     event_candidate_set_id: str | None = None
     event_model_sha256: str | None = None
+    queue_wait_s: float | None = None
 
 
 @dataclass(frozen=True)

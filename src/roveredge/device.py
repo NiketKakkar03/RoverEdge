@@ -1,8 +1,9 @@
 import math
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 Payload = TypeVar("Payload")
+QueuePolicy = Literal["fifo", "latest_pending"]
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,8 @@ class ModeledDeviceProfile:
     pending_capacity: int = 2
     deadline_s: float = 0.02
     maximum_age_s: float = 0.1
+    queue_policy: QueuePolicy = "fifo"
+    requests_per_tick: int = 1
 
     def __post_init__(self) -> None:
         durations = (
@@ -26,6 +29,10 @@ class ModeledDeviceProfile:
             raise ValueError("modeled stage durations must be finite and nonnegative")
         if self.pending_capacity < 0:
             raise ValueError("pending capacity cannot be negative")
+        if self.requests_per_tick <= 0:
+            raise ValueError("requests per tick must be positive")
+        if self.queue_policy not in ("fifo", "latest_pending"):
+            raise ValueError("unsupported queue policy")
         if (
             not math.isfinite(self.deadline_s)
             or not math.isfinite(self.maximum_age_s)
@@ -72,6 +79,7 @@ class DeviceEvent:
     observation_id: int
     candidate_set_id: str
     model_sha256: str
+    queue_wait_s: float | None = None
 
 
 class FifoDevice[Payload]:
@@ -121,6 +129,20 @@ class FifoDevice[Payload]:
         if self._executing is None:
             self._pending.append(request)
             return tuple(self._dispatch_next(modeled_time_s))
+        if self.profile.queue_policy == "latest_pending":
+            for index in range(len(self._pending) - 1, -1, -1):
+                if self._pending[index].episode_id == request.episode_id:
+                    replaced = self._pending[index]
+                    self._pending[index] = request
+                    return (
+                        self._event(
+                            "replaced",
+                            modeled_time_s,
+                            replaced,
+                            len(self._pending),
+                            f"replaced by request {request.request_id}",
+                        ),
+                    )
         if len(self._pending) >= self.profile.pending_capacity:
             return (
                 self._event(
@@ -193,7 +215,11 @@ class FifoDevice[Payload]:
                 modeled_time_s,
                 request,
                 len(self._pending),
-                f"modeled completion at {completed_at_s:.6f}s",
+                (
+                    f"queue wait {modeled_time_s - request.observed_at_s:.6f}s; "
+                    f"modeled completion at {completed_at_s:.6f}s"
+                ),
+                modeled_time_s - request.observed_at_s,
             )
         ]
 
@@ -204,6 +230,7 @@ class FifoDevice[Payload]:
         request: InferenceRequest[Payload],
         queue_depth: int,
         detail: str,
+        queue_wait_s: float | None = None,
     ) -> DeviceEvent:
         return DeviceEvent(
             kind=kind,
@@ -215,4 +242,5 @@ class FifoDevice[Payload]:
             observation_id=request.observation_id,
             candidate_set_id=request.candidate_set_id,
             model_sha256=request.model_sha256,
+            queue_wait_s=queue_wait_s,
         )

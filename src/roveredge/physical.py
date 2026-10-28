@@ -118,6 +118,7 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         "expired": 0,
         "consumed": 0,
         "deadline_misses": 0,
+        "replaced": 0,
     }
     observation_id = 0
     accepted_selection: CandidateSelection | None = None
@@ -141,6 +142,7 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         episode_id: str | None = None,
         event_candidate_set_id: str | None = None,
         event_model_sha256: str | None = None,
+        queue_wait_s: float | None = None,
     ) -> None:
         nonlocal sequence
         trace.append(
@@ -175,6 +177,7 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                 episode_id=episode_id,
                 event_candidate_set_id=event_candidate_set_id,
                 event_model_sha256=event_model_sha256,
+                queue_wait_s=queue_wait_s,
             )
         )
         sequence += 1
@@ -196,6 +199,11 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                 episode_id=event.episode_id,
                 event_candidate_set_id=event.candidate_set_id,
                 event_model_sha256=event.model_sha256,
+                queue_wait_s=(
+                    round(event.queue_wait_s, 9)
+                    if event.queue_wait_s is not None
+                    else None
+                ),
             )
 
     def transition(next_phase: MissionPhase) -> None:
@@ -393,6 +401,29 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                     record_device_events(
                         virtual_device.submit(inference_request, simulated_time)
                     )
+                    for _ in range(configuration.modeled_device.requests_per_tick - 1):
+                        burst_observation_id = observation_id
+                        observation_id += 1
+                        inference_counts["scheduled"] += 1
+                        burst_request = replace(
+                            inference_request,
+                            observation_id=burst_observation_id,
+                            request_id=burst_observation_id,
+                        )
+                        record(
+                            "inference_event",
+                            "burst inference request created",
+                            inference_event_kind="request_created",
+                            request_id=burst_observation_id,
+                            event_observation_id=burst_observation_id,
+                            modeled_event_time_s=simulated_time,
+                            episode_id=burst_request.episode_id,
+                            event_candidate_set_id=burst_request.candidate_set_id,
+                            event_model_sha256=burst_request.model_sha256,
+                        )
+                        record_device_events(
+                            virtual_device.submit(burst_request, simulated_time)
+                        )
                     if (
                         accepted_selection is not None
                         and accepted_observed_at_s is not None
@@ -525,6 +556,11 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         inference_summary=(
             {
                 **inference_counts,
+                "admitted_total": inference_counts["scheduled"]
+                - inference_counts["overflow"],
+                "dropped_total": inference_counts["overflow"]
+                + inference_counts["replaced"]
+                + inference_counts["expired"],
                 "execution_mode": "virtual_fifo",
                 "timing_provenance": "modeled",
             }
