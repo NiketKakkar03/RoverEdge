@@ -309,6 +309,49 @@ describe("mission replay application", () => {
     expect(root.querySelector("[data-field='decision']")?.textContent).toContain("cutoff 0.25");
   });
 
+  test("requests native naive inference and displays correctness provenance", async () => {
+    const nativeResult: RunResult = {
+      ...result,
+      request: {
+        ...result.request,
+        configuration: {
+          ...result.request.configuration,
+          controller_kind: "learned_collision_risk",
+          inference_backend: "native-naive",
+        },
+      },
+      controller_kind: "learned_collision_risk",
+      inference_backend: "native-naive",
+      command_disagreements: 0,
+      runtime_provenance: {
+        kernel: "fresh-naive-fp32-v1",
+        timing_provenance: "not_measured",
+      },
+    };
+    const run = vi.fn(async () => nativeResult);
+    const api: RoverEdgeApi = { getScenarios: async () => [scenario], run };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='native']")!);
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith({
+        ...scenario.default_run_request,
+        configuration: {
+          ...scenario.default_run_request.configuration,
+          controller_kind: "learned_collision_risk",
+          inference_backend: "native-naive",
+        },
+      }),
+    );
+    expect(root.querySelector("[data-field='runtime']")?.textContent).toContain(
+      "native-naive · disagreements 0 · not_measured",
+    );
+  });
+
   test("displays recorded physical failure evidence", async () => {
     const collisionScenario: Scenario = {
       ...scenario,

@@ -6,3 +6,5 @@
 __pycache__/
 dist/
 node_modules/
+build/
+src/roveredge/_native_runtime*.so

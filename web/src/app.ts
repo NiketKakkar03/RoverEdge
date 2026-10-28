@@ -53,6 +53,7 @@ export interface RunRequest {
     dock: { position_tolerance_m: number; heading_tolerance_rad: number };
     timeout_s: number;
     controller_kind: "geometric" | "learned_collision_risk";
+    inference_backend?: "python-reference" | "native-naive";
     model_artifact_version?: string | null;
     model_sha256?: string | null;
     risk_cutoff?: number | null;
@@ -105,6 +106,9 @@ export interface RunResult {
   model_sha256?: string | null;
   validation_evidence_reference?: string | null;
   validation_quality_gate_status?: "met" | "not_met" | null;
+  inference_backend?: "python-reference" | "native-naive" | null;
+  runtime_provenance?: Record<string, string> | null;
+  command_disagreements?: number | null;
   terminal_failure?: {
     code: "collision" | "unreachable" | "timeout";
     message: string;
@@ -240,6 +244,13 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     );
     setText(
       root,
+      "runtime",
+      result.inference_backend
+        ? `${result.inference_backend} · disagreements ${result.command_disagreements ?? "not compared"} · ${result.runtime_provenance?.timing_provenance ?? "reference execution"}`
+        : "Not applicable",
+    );
+    setText(
+      root,
       "phases",
       result.trace
         .filter((event) => event.kind === "phase_changed" || event.kind === "terminal")
@@ -265,6 +276,20 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
           configuration: {
             ...scenario.default_run_request.configuration,
             controller_kind: "learned_collision_risk",
+          },
+        }),
+      ),
+    );
+  root
+    .querySelector("[data-action='native']")!
+    .addEventListener("click", () =>
+      void run(() =>
+        api.run({
+          ...scenario.default_run_request,
+          configuration: {
+            ...scenario.default_run_request.configuration,
+            controller_kind: "learned_collision_risk",
+            inference_backend: "native-naive",
           },
         }),
       ),
@@ -335,6 +360,7 @@ function formatConfiguration(request: RunRequest): string {
     `${configuration.dock.heading_tolerance_rad} rad dock heading tolerance`,
     `${configuration.timeout_s} s timeout`,
     `${humanize(configuration.controller_kind)} controller`,
+    `${humanize(configuration.inference_backend ?? "python-reference")} inference`,
   ].join(" · ");
 }
 
@@ -440,6 +466,7 @@ function applicationMarkup(): string {
       <div class="actions">
         <button data-action="start">Start run</button>
         <button data-action="learned">Run learned controller</button>
+        <button data-action="native">Run native naive</button>
         <button data-action="timeout" class="secondary">Run expected timeout</button>
       </div>
     </section>
@@ -456,6 +483,7 @@ function applicationMarkup(): string {
           <dt>Controller</dt><dd data-field="controller">—</dd>
           <dt>Risk model</dt><dd data-field="model">Not used</dd>
           <dt>Validation evidence</dt><dd data-field="validation">Not applicable</dd>
+          <dt>Inference runtime</dt><dd data-field="runtime">Not applicable</dd>
           <dt>Phase</dt><dd data-field="phase">Not started</dd>
           <dt>Simulated time</dt><dd data-field="time">0.00 s</dd>
           <dt>Motion</dt><dd data-field="motion">0.000 m/s · 0.000 rad/s</dd>
