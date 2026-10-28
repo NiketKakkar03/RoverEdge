@@ -277,6 +277,8 @@ describe("mission replay application", () => {
               selected_risk: 0.2,
               selected_progress_score: 0.2,
               risk_cutoff: 0.25,
+              observation_age_s: 0.05,
+              timing_provenance: "modeled",
               detail: "acceptable candidate with maximum kinematic progress",
             }
           : event,
@@ -307,6 +309,9 @@ describe("mission replay application", () => {
     expect(root.querySelector("[data-field='validation']")?.textContent).toContain("not_met");
     expect(root.querySelector("[data-field='decision']")?.textContent).toContain("candidate 1");
     expect(root.querySelector("[data-field='decision']")?.textContent).toContain("cutoff 0.25");
+    expect(root.querySelector("[data-field='prediction-age']")?.textContent).toBe(
+      "0.050 s · modeled",
+    );
   });
 
   test("requests native naive inference and displays correctness provenance", async () => {

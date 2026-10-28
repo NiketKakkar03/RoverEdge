@@ -64,6 +64,16 @@ export interface RunRequest {
     model_sha256?: string | null;
     risk_cutoff?: number | null;
     candidate_set_id?: string | null;
+    execution_mode?: "synchronous" | "virtual_fifo";
+    modeled_device?: {
+      dispatch_s: number;
+      input_transfer_s: number;
+      compute_s: number;
+      output_transfer_s: number;
+      pending_capacity: number;
+      deadline_s: number;
+      maximum_age_s: number;
+    };
   };
   expected_mission_outcome: "completed" | "timed_out" | "collision" | "unreachable";
 }
@@ -78,7 +88,8 @@ interface TraceEvent extends ReplayEvent {
     | "range_sampled"
     | "braking_started"
     | "collision"
-    | "control_decision";
+    | "control_decision"
+    | "inference_event";
   pose: Pose;
   linear_velocity_mps: number;
   angular_velocity_radps: number;
@@ -91,6 +102,13 @@ interface TraceEvent extends ReplayEvent {
   risk_cutoff?: number | null;
   selected_risk?: number | null;
   selected_progress_score?: number | null;
+  inference_event_kind?: string | null;
+  request_id?: number | null;
+  observation_id?: number | null;
+  queue_depth?: number | null;
+  observation_age_s?: number | null;
+  modeled_event_time_s?: number | null;
+  timing_provenance?: "modeled" | "measured" | null;
 }
 
 export interface RunResult {
@@ -235,6 +253,17 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
       decision?.candidate_risks && decision.selected_candidate_index != null
         ? `candidate ${decision.selected_candidate_index} · risk ${decision.selected_risk?.toFixed(4)} · progress score ${decision.selected_progress_score?.toFixed(3)} · cutoff ${decision.risk_cutoff?.toFixed(2)} · [${decision.candidate_risks.map((risk) => risk.toFixed(3)).join(", ")}]`
         : "None",
+    );
+    const agedDecision = result.trace
+      .slice(0, event.sequence + 1)
+      .reverse()
+      .find((item) => item.observation_age_s != null);
+    setText(
+      root,
+      "prediction-age",
+      agedDecision?.observation_age_s != null
+        ? `${agedDecision.observation_age_s.toFixed(3)} s · ${agedDecision.timing_provenance ?? "unknown"}`
+        : "Not available",
     );
   };
 
@@ -624,6 +653,7 @@ function applicationMarkup(): string {
           <dt>Motion</dt><dd data-field="motion">0.000 m/s · 0.000 rad/s</dd>
           <dt>Replay evidence</dt><dd data-field="replay-evidence">None</dd>
           <dt>Learned decision</dt><dd data-field="decision">None</dd>
+          <dt>Prediction age</dt><dd data-field="prediction-age">Not available</dd>
           <dt>Mission outcome</dt><dd data-field="outcome">—</dd>
           <dt>Test verdict</dt><dd data-field="verdict">—</dd>
           <dt>Terminal failure</dt><dd data-field="failure">None</dd>

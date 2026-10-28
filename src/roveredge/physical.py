@@ -1,11 +1,15 @@
+import hashlib
+import json
 import math
 import uuid
-from dataclasses import replace
+from dataclasses import asdict, replace
 from pathlib import Path
 
+from .device import DeviceEvent, FifoDevice, InferenceRequest
 from .geometry import first_swept_collision, ray_distance
 from .learning import (
     CANDIDATE_COMMANDS,
+    CandidateSelection,
     LearningState,
     RiskModelArtifact,
     build_feature_vector,
@@ -50,13 +54,25 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
     if risk_model is not None:
         request = _freeze_learned_configuration(request, risk_model)
         configuration = request.configuration
+    episode_id = "episode-" + hashlib.sha256(
+        json.dumps(asdict(request), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:16]
     native_model = (
         NativeRiskModel(
             risk_model,
             backend=configuration.inference_backend,
             worker_count=configuration.inference_workers,
         )
-        if risk_model is not None and configuration.inference_backend.startswith("native-")
+        if risk_model is not None
+        and configuration.inference_backend.startswith("native-")
+        and configuration.execution_mode == "synchronous"
+        else None
+    )
+    virtual_device = (
+        FifoDevice[tuple[tuple[float, ...], tuple[float, ...]]](
+            configuration.modeled_device
+        )
+        if risk_model is not None and configuration.execution_mode == "virtual_fifo"
         else None
     )
     scenario = get_scenario(request.scenario_version)
@@ -94,6 +110,18 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
     latest_ranges: tuple[float, ...] | None = None
     route = outbound_route
     route_index = 1
+    inference_counts = {
+        "scheduled": 0,
+        "admitted": 0,
+        "completed": 0,
+        "overflow": 0,
+        "expired": 0,
+        "consumed": 0,
+        "deadline_misses": 0,
+    }
+    observation_id = 0
+    accepted_selection: CandidateSelection | None = None
+    accepted_observed_at_s: float | None = None
 
     def record(
         kind: EventKind,
@@ -104,6 +132,15 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         risk_cutoff: float | None = None,
         selected_risk: float | None = None,
         selected_progress_score: float | None = None,
+        inference_event_kind: str | None = None,
+        request_id: int | None = None,
+        event_observation_id: int | None = None,
+        queue_depth: int | None = None,
+        observation_age_s: float | None = None,
+        modeled_event_time_s: float | None = None,
+        episode_id: str | None = None,
+        event_candidate_set_id: str | None = None,
+        event_model_sha256: str | None = None,
     ) -> None:
         nonlocal sequence
         trace.append(
@@ -124,9 +161,42 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                 risk_cutoff=risk_cutoff,
                 selected_risk=selected_risk,
                 selected_progress_score=selected_progress_score,
+                inference_event_kind=inference_event_kind,
+                request_id=request_id,
+                observation_id=event_observation_id,
+                queue_depth=queue_depth,
+                observation_age_s=observation_age_s,
+                modeled_event_time_s=modeled_event_time_s,
+                timing_provenance=(
+                    "modeled"
+                    if inference_event_kind is not None or observation_age_s is not None
+                    else None
+                ),
+                episode_id=episode_id,
+                event_candidate_set_id=event_candidate_set_id,
+                event_model_sha256=event_model_sha256,
             )
         )
         sequence += 1
+
+    def record_device_events(events: tuple[DeviceEvent, ...]) -> None:
+        for event in events:
+            if event.kind in inference_counts:
+                inference_counts[event.kind] += 1
+            if event.kind == "deadline_missed":
+                inference_counts["deadline_misses"] += 1
+            record(
+                "inference_event",
+                event.detail,
+                inference_event_kind=event.kind,
+                request_id=event.request_id,
+                queue_depth=event.queue_depth,
+                modeled_event_time_s=round(event.modeled_time_s, 9),
+                event_observation_id=event.observation_id,
+                episode_id=event.episode_id,
+                event_candidate_set_id=event.candidate_set_id,
+                event_model_sha256=event.model_sha256,
+            )
 
     def transition(next_phase: MissionPhase) -> None:
         nonlocal phase
@@ -272,24 +342,89 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                     candidate_progress_score(waypoint_x, waypoint_y, candidate)
                     for candidate in CANDIDATE_COMMANDS
                 )
-                selection = select_candidate(risks, progress, risk_model.risk_cutoff)
-                if native_model is not None:
+                if virtual_device is not None:
+                    record_device_events(virtual_device.advance(simulated_time))
+                    current_observation_id = observation_id
+                    observation_id += 1
+                    inference_counts["scheduled"] += 1
+                    inference_request = InferenceRequest(
+                        episode_id=episode_id,
+                        observation_id=current_observation_id,
+                        request_id=current_observation_id,
+                        candidate_set_id=configuration.candidate_set_id or "candidate-set-v1",
+                        model_sha256=risk_model.sha256,
+                        observed_at_s=simulated_time,
+                        payload=(tuple(risks), progress),
+                    )
+                    record(
+                        "inference_event",
+                        "observation and inference request created",
+                        inference_event_kind="request_created",
+                        request_id=current_observation_id,
+                        event_observation_id=current_observation_id,
+                        modeled_event_time_s=simulated_time,
+                        episode_id=inference_request.episode_id,
+                        event_candidate_set_id=inference_request.candidate_set_id,
+                        event_model_sha256=inference_request.model_sha256,
+                    )
+                    completed, events = virtual_device.consume_latest(simulated_time)
+                    record_device_events(events)
+                    if completed is not None:
+                        completed_risks, completed_progress = completed.request.payload
+                        accepted_selection = select_candidate(
+                            completed_risks, completed_progress, risk_model.risk_cutoff
+                        )
+                        accepted_observed_at_s = completed.request.observed_at_s
+                        age_s = simulated_time - completed.request.observed_at_s
+                        record(
+                            "control_decision",
+                            accepted_selection.reason,
+                            candidate_risks=tuple(round(risk, 9) for risk in completed_risks),
+                            selected_candidate_index=accepted_selection.candidate_index,
+                            risk_cutoff=risk_model.risk_cutoff,
+                            selected_risk=round(accepted_selection.risk, 9),
+                            selected_progress_score=round(
+                                accepted_selection.progress_score, 9
+                            ),
+                            request_id=completed.request.request_id,
+                            event_observation_id=completed.request.observation_id,
+                            observation_age_s=round(age_s, 9),
+                        )
+                    record_device_events(
+                        virtual_device.submit(inference_request, simulated_time)
+                    )
+                    if (
+                        accepted_selection is not None
+                        and accepted_observed_at_s is not None
+                        and simulated_time - accepted_observed_at_s
+                        <= configuration.modeled_device.maximum_age_s
+                    ):
+                        selection = accepted_selection
+                    else:
+                        desired_linear = 0.0
+                        desired_angular = 0.0
+                        selection = None
+                else:
+                    selection = select_candidate(risks, progress, risk_model.risk_cutoff)
+                if native_model is not None and selection is not None:
                     reference_selection = select_candidate(
                         reference_risks, progress, risk_model.risk_cutoff
                     )
                     if reference_selection.candidate_index != selection.candidate_index:
                         command_disagreements += 1
-                desired_linear = selection.command.linear_velocity_mps
-                desired_angular = selection.command.angular_velocity_radps
-                record(
-                    "control_decision",
-                    selection.reason,
-                    candidate_risks=tuple(round(risk, 9) for risk in risks),
-                    selected_candidate_index=selection.candidate_index,
-                    risk_cutoff=risk_model.risk_cutoff,
-                    selected_risk=round(selection.risk, 9),
-                    selected_progress_score=round(selection.progress_score, 9),
-                )
+                if selection is not None:
+                    desired_linear = selection.command.linear_velocity_mps
+                    desired_angular = selection.command.angular_velocity_radps
+                    if virtual_device is None:
+                        record(
+                            "control_decision",
+                            selection.reason,
+                            candidate_risks=tuple(round(risk, 9) for risk in risks),
+                            selected_candidate_index=selection.candidate_index,
+                            risk_cutoff=risk_model.risk_cutoff,
+                            selected_risk=round(selection.risk, 9),
+                            selected_progress_score=round(selection.progress_score, 9),
+                        )
             stopping_distance = linear_velocity**2 / (
                 2 * configuration.max_braking_deceleration_mps2
             )
@@ -387,6 +522,15 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
             else None
         ),
         command_disagreements=(command_disagreements if native_model is not None else None),
+        inference_summary=(
+            {
+                **inference_counts,
+                "execution_mode": "virtual_fifo",
+                "timing_provenance": "modeled",
+            }
+            if virtual_device is not None
+            else None
+        ),
     )
 
 
