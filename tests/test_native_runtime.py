@@ -11,6 +11,8 @@ from roveredge.learning import CANDIDATE_COMMANDS, load_risk_model, select_candi
 from roveredge.native import (
     NativeInferenceResult,
     NativeRiskModel,
+    accelerate_available,
+    accelerate_matmul,
     blocked_matmul,
     naive_matmul,
     parallel_blocked_matmul,
@@ -22,6 +24,19 @@ def test_naive_matmul_supports_rectangular_products() -> None:
     right = ((7.0, 8.0), (9.0, 10.0), (11.0, 12.0))
 
     assert naive_matmul(left, right) == ((58.0, 64.0), (139.0, 154.0))
+
+
+def test_accelerate_matmul_supports_rectangular_products() -> None:
+    left = ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0))
+    right = ((7.0, 8.0), (9.0, 10.0), (11.0, 12.0))
+
+    if not accelerate_available():
+        with pytest.raises(RuntimeError, match="unavailable"):
+            accelerate_matmul(left, right)
+        return
+    assert np.asarray(accelerate_matmul(left, right)) == pytest.approx(
+        np.asarray(((58.0, 64.0), (139.0, 154.0))), rel=1e-6, abs=1e-6
+    )
 
 
 def test_blocked_matmul_handles_rectangular_block_tails() -> None:
@@ -111,6 +126,48 @@ def test_native_layers_logits_scores_and_commands_match_reference(
     )
 
 
+def test_accelerate_layers_logits_scores_and_commands_match_reference() -> None:
+    artifact = load_risk_model(Path("artifacts/issue-8/risk-model-v1.json"))
+    if not accelerate_available():
+        with pytest.raises(ValueError, match="unavailable"):
+            NativeRiskModel(artifact, backend="native-accelerate")
+        return
+
+    runtime = NativeRiskModel(artifact, backend="native-accelerate")
+    reference = NativeRiskModel(artifact, backend="native-naive")
+    batch = tuple(
+        tuple(1.0 + index * 0.01 for index in range(16))
+        + (
+            0.2,
+            -0.1,
+            2.0,
+            0.25,
+            candidate.linear_velocity_mps,
+            candidate.angular_velocity_radps,
+            0.2,
+            0.0,
+        )
+        for candidate in CANDIDATE_COMMANDS
+    )
+
+    accelerated = runtime.evaluate(batch)
+    expected = reference.evaluate(batch)
+    assert np.asarray(accelerated.hidden_one) == pytest.approx(
+        np.asarray(expected.hidden_one), rel=1e-4, abs=1e-5
+    )
+    assert np.asarray(accelerated.hidden_two) == pytest.approx(
+        np.asarray(expected.hidden_two), rel=1e-4, abs=1e-5
+    )
+    assert accelerated.logits == pytest.approx(expected.logits, rel=1e-4, abs=1e-5)
+    assert accelerated.scores == pytest.approx(expected.scores, rel=1e-4, abs=1e-5)
+    progress = tuple(float(index) / 10 for index in range(8))
+    assert select_candidate(
+        accelerated.scores, progress, artifact.risk_cutoff
+    ).candidate_index == select_candidate(
+        expected.scores, progress, artifact.risk_cutoff
+    ).candidate_index
+
+
 def test_native_runtime_rejects_nonfinite_batch() -> None:
     artifact = load_risk_model(Path("artifacts/issue-8/risk-model-v1.json"))
     runtime = NativeRiskModel(artifact)
@@ -120,11 +177,17 @@ def test_native_runtime_rejects_nonfinite_batch() -> None:
         runtime.evaluate(batch)
 
 
-def test_parallel_runtime_prevents_overlapping_workspace_use() -> None:
+@pytest.mark.parametrize(
+    ("backend", "worker_count"),
+    [("native-parallel-blocked", 4), ("native-accelerate", 1)],
+)
+def test_native_runtime_prevents_overlapping_workspace_use(
+    backend: str, worker_count: int
+) -> None:
+    if backend == "native-accelerate" and not accelerate_available():
+        pytest.skip("overlap test requires Apple Accelerate")
     artifact = load_risk_model(Path("artifacts/issue-8/risk-model-v1.json"))
-    runtime = NativeRiskModel(
-        artifact, backend="native-parallel-blocked", worker_count=4
-    )
+    runtime = NativeRiskModel(artifact, backend=backend, worker_count=worker_count)
     batch = tuple((0.0,) * 24 for _ in range(8))
     expected = runtime.evaluate(batch)
     barrier = Barrier(16)

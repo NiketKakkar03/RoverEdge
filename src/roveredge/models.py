@@ -17,7 +17,11 @@ EventKind = Literal[
 ]
 ControllerKind = Literal["geometric", "learned_collision_risk"]
 InferenceBackend = Literal[
-    "python-reference", "native-naive", "native-blocked", "native-parallel-blocked"
+    "python-reference",
+    "native-naive",
+    "native-blocked",
+    "native-parallel-blocked",
+    "native-accelerate",
 ]
 MissionPhase = Literal[
     "approaching_target",

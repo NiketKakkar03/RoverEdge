@@ -1,3 +1,4 @@
+import json
 from dataclasses import asdict
 from pathlib import Path
 
@@ -6,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .experiment import preset_run_request, run_experiment
 from .models import RunRequest, RunResult
+from .native import accelerate_available
 from .scenarios import SCENARIOS, Scenario, physical_run_request
 
 app = FastAPI(title="RoverEdge", version="0.1.0")
@@ -48,6 +50,20 @@ def get_preset_open_scenario() -> dict[str, object]:
             "size_m": {"width": 0.6, "height": 1.0},
         },
         "default_run_request": asdict(preset_run_request()),
+    }
+
+
+@app.get("/api/native-comparisons/accelerate")
+def get_accelerate_comparison() -> dict[str, object]:
+    evidence_path = (
+        Path(__file__).resolve().parents[2]
+        / "artifacts"
+        / "issue-12"
+        / "native-accelerate-comparison.json"
+    )
+    return {
+        "available_locally": accelerate_available(),
+        "recorded_result": json.loads(evidence_path.read_text()),
     }
 
 

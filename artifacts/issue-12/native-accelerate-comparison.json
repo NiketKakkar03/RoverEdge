@@ -1,0 +1,117 @@
+{
+  "accelerate_available": true,
+  "block_size": 16,
+  "build_type": "Release",
+  "command_disagreements": [],
+  "compared_backends": [
+    "native-naive",
+    "native-blocked",
+    "native-parallel-blocked-1",
+    "native-parallel-blocked-2",
+    "native-parallel-blocked-4",
+    "native-accelerate"
+  ],
+  "compiler_options": [
+    "-O3",
+    "-DNDEBUG",
+    "-std=c++20",
+    "-arch",
+    "arm64",
+    "-fPIC",
+    "-fvisibility=hidden",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-flto"
+  ],
+  "correctness_gate": "passed",
+  "final_test_status": "untouched",
+  "hardware_model": "Apple M1 Pro",
+  "interleaving": "backend order alternates by repetition; same batch within each sample",
+  "latency": {
+    "native-accelerate": {
+      "mean_us": 25.912790666666666,
+      "median_us": 24.042,
+      "minimum_us": 21.875,
+      "p95_us": 32.25,
+      "samples": 3000
+    },
+    "native-blocked": {
+      "mean_us": 30.975527999999997,
+      "median_us": 29.042,
+      "minimum_us": 27.625,
+      "p95_us": 36.791,
+      "samples": 3000
+    },
+    "native-naive": {
+      "mean_us": 27.181768333333334,
+      "median_us": 25.416,
+      "minimum_us": 24.084,
+      "p95_us": 32.875,
+      "samples": 3000
+    },
+    "native-parallel-blocked-1": {
+      "mean_us": 134.99132066666667,
+      "median_us": 113.1045,
+      "minimum_us": 79.5,
+      "p95_us": 198.417,
+      "samples": 3000
+    },
+    "native-parallel-blocked-2": {
+      "mean_us": 177.69792166666667,
+      "median_us": 157.979,
+      "minimum_us": 97.667,
+      "p95_us": 263.666,
+      "samples": 3000
+    },
+    "native-parallel-blocked-4": {
+      "mean_us": 271.7066413333333,
+      "median_us": 233.625,
+      "minimum_us": 154.166,
+      "p95_us": 410.75,
+      "samples": 3000
+    }
+  },
+  "machine_state": "not controlled; foreground local run with no recorded thermal, power, or background-load isolation",
+  "maximum_absolute_errors": {
+    "hidden_one": 0.0,
+    "hidden_two": 4.76837158203125e-06,
+    "logits": 2.288818359375e-05,
+    "scores": 7.748603820800781e-07
+  },
+  "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
+  "parallel_worker_counts": [
+    1,
+    2,
+    4
+  ],
+  "performance_withheld_reason": null,
+  "reference_backend": "native-naive",
+  "repetitions": 3,
+  "runtime_provenance": {
+    "accelerate_available": "true",
+    "backend": "native-accelerate",
+    "block_size": "16",
+    "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+    "cxx_standard": "C++20",
+    "kernel": "apple-accelerate-cblas-sgemm",
+    "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
+    "platform": "macOS-26.7-arm64-arm-64bit",
+    "timing_provenance": "measured_saved_input_replay",
+    "worker_count": "1"
+  },
+  "samples_per_backend_per_repetition": 1000,
+  "saved_input_artifact": "artifacts/issue-9/native-naive-inputs.json",
+  "saved_input_sha256": "007cd77405e48b5ed82d6b5c21b3ef113045a496c2e934ce436cc17bb818502e",
+  "timing_boundary": "Python call through binding, one warmed 8-candidate batch",
+  "timing_provenance": "measured_saved_input_replay",
+  "tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(native naive)",
+  "tolerance_failure_counts": {
+    "hidden_one": 0,
+    "hidden_two": 0,
+    "logits": 0,
+    "scores": 0
+  },
+  "version": "native-accelerate-comparison-v1",
+  "warmup_batches_per_backend": 100
+}

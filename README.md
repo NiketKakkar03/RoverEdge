@@ -4,8 +4,9 @@ RoverEdge is a software experimentation environment for investigating how comput
 
 The current implementation includes deterministic inspection-and-return missions, obstacle dynamics
 and failure evidence, an experimental learned collision-risk controller, and fresh naive,
-cache-blocked, and parallel blocked C++20 inference. SAM grounding remains deferred pending live provider verification, and delayed-inference
-modeling is not implemented yet.
+cache-blocked, and parallel blocked C++20 inference plus an Apple Accelerate comparison. SAM
+grounding remains deferred pending live provider verification, and delayed-inference modeling is not
+implemented yet.
 
 ## Run locally
 
@@ -32,10 +33,14 @@ make build-native
 make compare-native-naive
 make compare-native-blocked
 make compare-native-parallel
+make compare-native-accelerate
 ```
 
-The comparison artifact records numerical tolerance results, selected-command disagreements,
-compiler/platform provenance, and `performance_claim: not measured`. It does not claim a speedup.
+The Accelerate command is available on supported Apple hosts. The browser always labels and shows
+the checked-in M1 Pro result separately from current-host availability. Comparison artifacts record
+numerical tolerance results, selected-command disagreements, compiler/platform provenance, warmed
+saved-input timing boundaries, and uncontrolled machine-state limitations. These are native replay
+measurements, not closed-loop mission-latency or physical-robot claims.
 
 Run all automated checks with:
 

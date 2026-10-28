@@ -57,7 +57,8 @@ export interface RunRequest {
       | "python-reference"
       | "native-naive"
       | "native-blocked"
-      | "native-parallel-blocked";
+      | "native-parallel-blocked"
+      | "native-accelerate";
     inference_workers?: number;
     model_artifact_version?: string | null;
     model_sha256?: string | null;
@@ -116,6 +117,7 @@ export interface RunResult {
     | "native-naive"
     | "native-blocked"
     | "native-parallel-blocked"
+    | "native-accelerate"
     | null;
   runtime_provenance?: Record<string, string> | null;
   command_disagreements?: number | null;
@@ -130,12 +132,29 @@ export interface RunResult {
 
 export interface RoverEdgeApi {
   getScenarios(): Promise<Scenario[]>;
+  getAccelerateComparison?(): Promise<AccelerateComparison>;
   run(request: RunRequest): Promise<RunResult>;
+}
+
+interface AccelerateComparison {
+  available_locally: boolean;
+  recorded_result: {
+    hardware_model: string;
+    correctness_gate: string;
+    timing_provenance: string;
+    latency: {
+      "native-naive": { median_us: number; samples: number };
+      "native-accelerate": { median_us: number; samples: number };
+    };
+  };
 }
 
 export const httpApi: RoverEdgeApi = {
   async getScenarios() {
     return requestJson<Scenario[]>("/api/scenarios");
+  },
+  async getAccelerateComparison() {
+    return requestJson<AccelerateComparison>("/api/native-comparisons/accelerate");
   },
   async run(request) {
     return requestJson<RunResult>("/api/runs", request);
@@ -155,6 +174,22 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     setText(root, "target", scenario.target.label);
   };
   showScenario();
+  if (api.getAccelerateComparison) {
+    const comparison = await api.getAccelerateComparison();
+    const recorded = comparison.recorded_result;
+    const accelerateButton = root.querySelector<HTMLButtonElement>(
+      "[data-action='accelerate']",
+    )!;
+    accelerateButton.disabled = !comparison.available_locally;
+    if (!comparison.available_locally) {
+      accelerateButton.title = "Apple Accelerate is unavailable on this host";
+    }
+    setText(
+      root,
+      "accelerate-comparison",
+      `${comparison.available_locally ? "available locally" : "unavailable locally"} · recorded ${recorded.hardware_model} · correctness ${recorded.correctness_gate} · naive ${recorded.latency["native-naive"].median_us} µs median · Accelerate ${recorded.latency["native-accelerate"].median_us} µs median · ${recorded.timing_provenance}`,
+    );
+  }
 
   let result: RunResult | undefined;
   let replay: ReplayController | undefined;
@@ -331,6 +366,20 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
         }),
       ),
     );
+  root
+    .querySelector("[data-action='accelerate']")!
+    .addEventListener("click", () =>
+      void run(() =>
+        api.run({
+          ...scenario.default_run_request,
+          configuration: {
+            ...scenario.default_run_request.configuration,
+            controller_kind: "learned_collision_risk",
+            inference_backend: "native-accelerate",
+          },
+        }),
+      ),
+    );
   selector.addEventListener("change", () => {
     scenario = scenarios.find((item) => item.scenario_version === selector.value)!;
     showScenario();
@@ -432,6 +481,16 @@ function formatRuntimeEvidence(result: RunResult): string {
     parts.push(`workers ${provenance.worker_count}`);
     parts.push(`serial blocked ${provenance.serial_blocked_median_us} µs median`);
     parts.push(`parallel ${provenance.parallel_median_us} µs median`);
+  }
+  if (
+    provenance?.comparison_correctness === "passed" &&
+    provenance.recorded_hardware_model &&
+    provenance.naive_median_us &&
+    provenance.accelerate_median_us
+  ) {
+    parts.push(`recorded ${provenance.recorded_hardware_model}`);
+    parts.push(`naive ${provenance.naive_median_us} µs median`);
+    parts.push(`Accelerate ${provenance.accelerate_median_us} µs median`);
   }
   return parts.join(" · ");
 }
@@ -541,6 +600,7 @@ function applicationMarkup(): string {
         <button data-action="native">Run native naive</button>
         <button data-action="blocked">Run native blocked</button>
         <button data-action="parallel">Run native parallel (4 workers)</button>
+        <button data-action="accelerate">Run Apple Accelerate</button>
         <button data-action="timeout" class="secondary">Run expected timeout</button>
       </div>
     </section>
@@ -558,6 +618,7 @@ function applicationMarkup(): string {
           <dt>Risk model</dt><dd data-field="model">Not used</dd>
           <dt>Validation evidence</dt><dd data-field="validation">Not applicable</dd>
           <dt>Inference runtime</dt><dd data-field="runtime">Not applicable</dd>
+          <dt>Accelerate comparison</dt><dd data-field="accelerate-comparison">Recorded evidence unavailable</dd>
           <dt>Phase</dt><dd data-field="phase">Not started</dd>
           <dt>Simulated time</dt><dd data-field="time">0.00 s</dd>
           <dt>Motion</dt><dd data-field="motion">0.000 m/s · 0.000 rad/s</dd>

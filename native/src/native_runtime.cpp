@@ -8,6 +8,10 @@
 #include <utility>
 #include <vector>
 
+#if ROVEREDGE_HAS_ACCELERATE
+#include <Accelerate/Accelerate.h>
+#endif
+
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
@@ -64,6 +68,38 @@ Matrix blocked_matmul(const Matrix& left, const Matrix& right, std::size_t block
   Matrix output(left.size(), std::vector<float>(right.front().size(), 0.0F));
   blocked_matmul_into(left, right, output, block_size);
   return output;
+}
+
+Matrix accelerate_matmul(const Matrix& left, const Matrix& right) {
+  validate_matrix(left, "left operand");
+  validate_matrix(right, "right operand");
+  if (left.front().size() != right.size()) {
+    throw std::invalid_argument("matrix dimensions do not align");
+  }
+#if ROVEREDGE_HAS_ACCELERATE
+  const auto rows = left.size();
+  const auto inner = right.size();
+  const auto columns = right.front().size();
+  std::vector<float> flat_left;
+  std::vector<float> flat_right;
+  flat_left.reserve(rows * inner);
+  flat_right.reserve(inner * columns);
+  for (const auto& row : left) flat_left.insert(flat_left.end(), row.begin(), row.end());
+  for (const auto& row : right) flat_right.insert(flat_right.end(), row.begin(), row.end());
+  std::vector<float> flat_output(rows * columns, 0.0F);
+  cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, static_cast<int>(rows),
+              static_cast<int>(columns), static_cast<int>(inner), 1.0F, flat_left.data(),
+              static_cast<int>(inner), flat_right.data(), static_cast<int>(columns), 0.0F,
+              flat_output.data(), static_cast<int>(columns));
+  Matrix output(rows, std::vector<float>(columns));
+  for (std::size_t row = 0; row < rows; ++row) {
+    std::copy_n(flat_output.begin() + static_cast<std::ptrdiff_t>(row * columns), columns,
+                output[row].begin());
+  }
+  return output;
+#else
+  throw std::runtime_error("Apple Accelerate backend is unavailable on this host");
+#endif
 }
 
 Matrix parallel_blocked_matmul(const Matrix& left, const Matrix& right,
@@ -212,9 +248,14 @@ class NativeRiskModel {
       throw std::invalid_argument("model dimensions do not match 24-64-32-1");
     }
     if (backend_ != "native-naive" && backend_ != "native-blocked" &&
-        backend_ != "native-parallel-blocked") {
+        backend_ != "native-parallel-blocked" && backend_ != "native-accelerate") {
       throw std::invalid_argument("unsupported native inference backend");
     }
+#if !ROVEREDGE_HAS_ACCELERATE
+    if (backend_ == "native-accelerate") {
+      throw std::runtime_error("Apple Accelerate backend is unavailable on this host");
+    }
+#endif
     if (block_size_ == 0) throw std::invalid_argument("block size must be positive");
     if (worker_count_ == 0) throw std::invalid_argument("worker count must be positive");
     for (float value : mean_) {
@@ -239,6 +280,17 @@ class NativeRiskModel {
         biases_[0].size() != 64 || biases_[1].size() != 32 || biases_[2].size() != 1) {
       throw std::invalid_argument("model dimensions do not match 24-64-32-1");
     }
+    if (backend_ == "native-accelerate") {
+      flat_weights_.reserve(weights_.size());
+      for (const auto& weight : weights_) {
+        std::vector<float> flat;
+        flat.reserve(weight.size() * weight.front().size());
+        for (const auto& row : weight) flat.insert(flat.end(), row.begin(), row.end());
+        flat_weights_.push_back(std::move(flat));
+      }
+      accelerate_left_.resize(8 * 64);
+      accelerate_output_.resize(8 * 64);
+    }
   }
 
   py::dict evaluate(const Matrix& batch) {
@@ -255,11 +307,11 @@ class NativeRiskModel {
         normalized_[row][index] = (batch[row][index] - mean_[index]) / scale_[index];
       }
     }
-    multiply_into(normalized_, weights_[0], hidden_one_);
+    multiply_into(normalized_, weights_[0], hidden_one_, 0);
     add_bias_and_relu(hidden_one_, biases_[0], true);
-    multiply_into(hidden_one_, weights_[1], hidden_two_);
+    multiply_into(hidden_one_, weights_[1], hidden_two_, 1);
     add_bias_and_relu(hidden_two_, biases_[1], true);
-    multiply_into(hidden_two_, weights_[2], logit_matrix_);
+    multiply_into(hidden_two_, weights_[2], logit_matrix_, 2);
     for (std::size_t row = 0; row < batch.size(); ++row) {
       logits_[row] = logit_matrix_[row][0] + biases_[2][0];
       scores_[row] = 1.0F / (1.0F + std::exp(-logits_[row]));
@@ -274,11 +326,30 @@ class NativeRiskModel {
   }
 
  private:
-  void multiply_into(const Matrix& left, const Matrix& right, Matrix& output) {
+  void multiply_into(const Matrix& left, const Matrix& right, Matrix& output,
+                     std::size_t layer_index) {
     if (backend_ == "native-parallel-blocked") {
       parallel_blocked_matmul_into(left, right, output, block_size_, worker_count_);
     } else if (backend_ == "native-blocked") {
       blocked_matmul_into(left, right, output, block_size_);
+    } else if (backend_ == "native-accelerate") {
+#if ROVEREDGE_HAS_ACCELERATE
+      const auto rows = left.size();
+      const auto inner = right.size();
+      const auto columns = right.front().size();
+      auto destination = accelerate_left_.begin();
+      for (const auto& row : left) destination = std::copy(row.begin(), row.end(), destination);
+      cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, static_cast<int>(rows),
+                  static_cast<int>(columns), static_cast<int>(inner), 1.0F,
+                  accelerate_left_.data(), static_cast<int>(inner),
+                  flat_weights_[layer_index].data(), static_cast<int>(columns), 0.0F,
+                  accelerate_output_.data(), static_cast<int>(columns));
+      for (std::size_t row = 0; row < rows; ++row) {
+        std::copy_n(
+            accelerate_output_.begin() + static_cast<std::ptrdiff_t>(row * columns), columns,
+            output[row].begin());
+      }
+#endif
     } else {
       matmul_into(left, right, output);
     }
@@ -287,6 +358,7 @@ class NativeRiskModel {
   std::vector<float> mean_;
   std::vector<float> scale_;
   std::vector<Matrix> weights_;
+  std::vector<std::vector<float>> flat_weights_;
   std::vector<std::vector<float>> biases_;
   Matrix normalized_;
   Matrix hidden_one_;
@@ -294,6 +366,8 @@ class NativeRiskModel {
   Matrix logit_matrix_;
   std::vector<float> logits_;
   std::vector<float> scores_;
+  std::vector<float> accelerate_left_;
+  std::vector<float> accelerate_output_;
   std::string backend_;
   std::size_t block_size_;
   std::size_t worker_count_;
@@ -307,19 +381,24 @@ PYBIND11_MODULE(_native_runtime, module) {
   module.def("naive_matmul", &matmul, py::arg("left"), py::arg("right"));
   module.def("blocked_matmul", &blocked_matmul, py::arg("left"), py::arg("right"),
              py::arg("block_size"));
+  module.def("accelerate_matmul", &accelerate_matmul, py::arg("left"), py::arg("right"));
   module.def("parallel_blocked_matmul", &parallel_blocked_matmul, py::arg("left"),
              py::arg("right"), py::arg("block_size"), py::arg("worker_count"));
+  module.def("accelerate_available", [] { return ROVEREDGE_HAS_ACCELERATE != 0; });
   module.def("runtime_metadata", [](const std::string& backend, std::size_t block_size,
                                     std::size_t worker_count) {
     py::dict metadata;
     metadata["compiler"] = __VERSION__;
     metadata["cxx_standard"] = "C++20";
-    metadata["kernel"] = backend == "native-parallel-blocked"
+    metadata["kernel"] = backend == "native-accelerate"
+                             ? "apple-accelerate-cblas-sgemm"
+                         : backend == "native-parallel-blocked"
                              ? "fresh-parallel-blocked-fp32-v1"
                          : backend == "native-blocked" ? "fresh-blocked-fp32-v1"
                                                        : "fresh-naive-fp32-v1";
     metadata["block_size"] = std::to_string(block_size);
     metadata["worker_count"] = std::to_string(worker_count);
+    metadata["accelerate_available"] = ROVEREDGE_HAS_ACCELERATE ? "true" : "false";
     return metadata;
   }, py::arg("backend"), py::arg("block_size"), py::arg("worker_count"));
   py::class_<NativeRiskModel>(module, "NativeRiskModel")

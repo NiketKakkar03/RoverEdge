@@ -1,5 +1,6 @@
 import json
 import platform
+import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,8 +19,27 @@ class NativeInferenceResult:
     scores: tuple[float, ...]
 
 
+def accelerate_available() -> bool:
+    return bool(_native_runtime.accelerate_available())
+
+
+def hardware_model() -> str:
+    if platform.system() == "Darwin":
+        try:
+            return subprocess.check_output(
+                ["sysctl", "-n", "machdep.cpu.brand_string"], text=True
+            ).strip()
+        except (OSError, subprocess.CalledProcessError):
+            pass
+    return platform.processor() or platform.machine() or "unknown"
+
+
 def naive_matmul(left: Matrix, right: Matrix) -> tuple[tuple[float, ...], ...]:
     return tuple(tuple(row) for row in _native_runtime.naive_matmul(left, right))
+
+
+def accelerate_matmul(left: Matrix, right: Matrix) -> tuple[tuple[float, ...], ...]:
+    return tuple(tuple(row) for row in _native_runtime.accelerate_matmul(left, right))
 
 
 def blocked_matmul(
@@ -50,6 +70,8 @@ class NativeRiskModel:
         block_size: int = 16,
         worker_count: int = 1,
     ) -> None:
+        if backend == "native-accelerate" and not accelerate_available():
+            raise ValueError("Apple Accelerate backend is unavailable on this host")
         self.backend = backend
         self.block_size = block_size
         self.worker_count = worker_count
@@ -90,7 +112,9 @@ def runtime_provenance(
         "cxx_standard": str(metadata["cxx_standard"]),
         "block_size": str(metadata["block_size"]),
         "worker_count": str(metadata["worker_count"]),
+        "accelerate_available": str(metadata["accelerate_available"]),
         "platform": platform.platform(),
+        "hardware_model": hardware_model(),
         "model_sha256": model_sha256,
         "timing_provenance": timing_provenance,
     }
@@ -138,5 +162,28 @@ def runtime_provenance(
                 key = f"native-parallel-blocked-{worker_count}"
                 provenance["parallel_median_us"] = str(
                     comparison["latency"][key]["median_us"]
+                )
+    if backend == "native-accelerate" and include_comparison:
+        comparison_path = (
+            Path(__file__).resolve().parents[2]
+            / "artifacts"
+            / "issue-12"
+            / "native-accelerate-comparison.json"
+        )
+        if comparison_path.is_file():
+            comparison = json.loads(comparison_path.read_text())
+            provenance["comparison_evidence"] = (
+                "artifacts/issue-12/native-accelerate-comparison.json"
+            )
+            provenance["comparison_correctness"] = str(comparison["correctness_gate"])
+            provenance["saved_input_sha256"] = str(comparison["saved_input_sha256"])
+            provenance["recorded_hardware_model"] = str(comparison["hardware_model"])
+            if comparison["correctness_gate"] == "passed" and comparison["latency"]:
+                provenance["timing_provenance"] = str(comparison["timing_provenance"])
+                provenance["naive_median_us"] = str(
+                    comparison["latency"]["native-naive"]["median_us"]
+                )
+                provenance["accelerate_median_us"] = str(
+                    comparison["latency"]["native-accelerate"]["median_us"]
                 )
     return provenance
