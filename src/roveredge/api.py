@@ -1,0 +1,40 @@
+from dataclasses import asdict
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
+
+from .experiment import preset_run_request, run_experiment
+from .models import RunRequest, RunResult
+
+app = FastAPI(title="RoverEdge", version="0.1.0")
+
+
+@app.get("/api/scenarios/preset-open")
+def get_preset_open_scenario() -> dict[str, object]:
+    return {
+        "scenario_version": "preset-open-v1",
+        "name": "Open inspection lane",
+        "map_bounds_m": {"width": 8.0, "height": 6.0},
+        "dock_pose": {"x_m": 1.0, "y_m": 3.0, "heading_rad": 0.0},
+        "target": {
+            "id": "preset-storage-container",
+            "label": "Storage container",
+            "center_m": {"x": 6.5, "y": 3.0},
+            "size_m": {"width": 0.6, "height": 1.0},
+        },
+        "default_run_request": asdict(preset_run_request()),
+    }
+
+
+@app.post("/api/runs")
+def create_run(request: RunRequest) -> RunResult:
+    try:
+        return run_experiment(request)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+web_distribution = Path(__file__).resolve().parents[2] / "dist"
+if web_distribution.is_dir():
+    app.mount("/", StaticFiles(directory=web_distribution, html=True), name="web")
