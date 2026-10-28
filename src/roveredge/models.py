@@ -16,7 +16,9 @@ EventKind = Literal[
     "control_decision",
 ]
 ControllerKind = Literal["geometric", "learned_collision_risk"]
-InferenceBackend = Literal["python-reference", "native-naive", "native-blocked"]
+InferenceBackend = Literal[
+    "python-reference", "native-naive", "native-blocked", "native-parallel-blocked"
+]
 MissionPhase = Literal[
     "approaching_target",
     "aligning_to_target",
@@ -97,6 +99,7 @@ class RunConfiguration:
     timeout_s: float = 120.0
     controller_kind: ControllerKind = "geometric"
     inference_backend: InferenceBackend = "python-reference"
+    inference_workers: int = 1
     model_artifact_version: str | None = None
     model_sha256: str | None = None
     risk_cutoff: float | None = None
@@ -119,6 +122,13 @@ class RunConfiguration:
             raise ValueError("route grid resolution must be positive and clearance nonnegative")
         if self.timeout_s <= 0:
             raise ValueError("mission timeout must be positive")
+        if self.inference_workers <= 0:
+            raise ValueError("inference workers must be positive")
+        if (
+            self.inference_backend == "native-parallel-blocked"
+            and self.inference_workers not in (1, 2, 4)
+        ):
+            raise ValueError("parallel blocked inference supports 1, 2, or 4 workers")
 
 
 @dataclass(frozen=True)

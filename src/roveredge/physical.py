@@ -51,7 +51,11 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         request = _freeze_learned_configuration(request, risk_model)
         configuration = request.configuration
     native_model = (
-        NativeRiskModel(risk_model, backend=configuration.inference_backend)
+        NativeRiskModel(
+            risk_model,
+            backend=configuration.inference_backend,
+            worker_count=configuration.inference_workers,
+        )
         if risk_model is not None and configuration.inference_backend.startswith("native-")
         else None
     )
@@ -375,7 +379,9 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         inference_backend=(configuration.inference_backend if risk_model is not None else None),
         runtime_provenance=(
             runtime_provenance(
-                risk_model.sha256, backend=configuration.inference_backend
+                risk_model.sha256,
+                backend=configuration.inference_backend,
+                worker_count=configuration.inference_workers,
             )
             if native_model is not None and risk_model is not None
             else None

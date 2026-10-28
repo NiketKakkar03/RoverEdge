@@ -401,6 +401,61 @@ describe("mission replay application", () => {
     );
   });
 
+  test("runs parallel blocked inference and displays worker overhead honestly", async () => {
+    const parallelResult: RunResult = {
+      ...result,
+      request: {
+        ...result.request,
+        configuration: {
+          ...result.request.configuration,
+          controller_kind: "learned_collision_risk",
+          inference_backend: "native-parallel-blocked",
+          inference_workers: 4,
+        },
+      },
+      controller_kind: "learned_collision_risk",
+      inference_backend: "native-parallel-blocked",
+      command_disagreements: 0,
+      runtime_provenance: {
+        comparison_correctness: "passed",
+        timing_provenance: "measured_saved_input_replay",
+        kernel: "fresh-parallel-blocked-fp32-v1",
+        block_size: "16",
+        worker_count: "4",
+        saved_input_sha256: "007cd77405e48b5ed82d6b5c21b3ef1",
+        comparison_evidence: "artifacts/issue-11/native-parallel-comparison.json",
+        serial_blocked_median_us: "198.0415",
+        parallel_median_us: "314.9375",
+      },
+    };
+    const run = vi.fn(async () => parallelResult);
+    const api: RoverEdgeApi = { getScenarios: async () => [scenario], run };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='parallel']")!);
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith({
+        ...scenario.default_run_request,
+        configuration: {
+          ...scenario.default_run_request.configuration,
+          controller_kind: "learned_collision_risk",
+          inference_backend: "native-parallel-blocked",
+          inference_workers: 4,
+        },
+      }),
+    );
+    expect(root.querySelector("[data-field='runtime']")?.textContent).toContain(
+      "workers 4 · serial blocked 198.0415 µs median · parallel 314.9375 µs median",
+    );
+    expect(root.querySelector("[data-field='runtime']")?.textContent).toContain(
+      "artifacts/issue-11/native-parallel-comparison.json",
+    );
+  });
+
   test("displays recorded physical failure evidence", async () => {
     const collisionScenario: Scenario = {
       ...scenario,

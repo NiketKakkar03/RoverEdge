@@ -1,4 +1,4 @@
-.PHONY: setup dev build-native compare-native-naive compare-native-blocked check train-risk-model
+.PHONY: setup dev build-native compare-native-naive compare-native-blocked compare-native-parallel check train-risk-model
 
 setup:
 	uv sync
@@ -10,7 +10,7 @@ dev:
 	uv run uvicorn roveredge.api:app --host 127.0.0.1 --port 8000
 
 build-native:
-	uv run cmake -S native -B build/native -Dpybind11_DIR="$$(uv run python -m pybind11 --cmakedir)"
+	uv run cmake -S native -B build/native -DCMAKE_BUILD_TYPE=Release -Dpybind11_DIR="$$(uv run python -m pybind11 --cmakedir)"
 	uv run cmake --build build/native --config Release
 
 compare-native-naive: build-native
@@ -18,6 +18,9 @@ compare-native-naive: build-native
 
 compare-native-blocked: build-native
 	uv run python scripts/compare_native_blocked.py
+
+compare-native-parallel: build-native
+	uv run python scripts/compare_native_parallel.py
 
 check: build-native
 	uv run pytest

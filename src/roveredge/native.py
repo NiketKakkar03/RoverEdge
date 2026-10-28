@@ -30,6 +30,17 @@ def blocked_matmul(
     )
 
 
+def parallel_blocked_matmul(
+    left: Matrix, right: Matrix, *, block_size: int, worker_count: int
+) -> tuple[tuple[float, ...], ...]:
+    return tuple(
+        tuple(row)
+        for row in _native_runtime.parallel_blocked_matmul(
+            left, right, block_size, worker_count
+        )
+    )
+
+
 class NativeRiskModel:
     def __init__(
         self,
@@ -37,9 +48,11 @@ class NativeRiskModel:
         *,
         backend: str = "native-naive",
         block_size: int = 16,
+        worker_count: int = 1,
     ) -> None:
         self.backend = backend
         self.block_size = block_size
+        self.worker_count = worker_count
         self._runtime = _native_runtime.NativeRiskModel(
             artifact.normalization.mean,
             artifact.normalization.standard_deviation,
@@ -47,6 +60,7 @@ class NativeRiskModel:
             artifact.biases,
             backend,
             block_size,
+            worker_count,
         )
 
     def evaluate(self, batch: Matrix) -> NativeInferenceResult:
@@ -64,16 +78,18 @@ def runtime_provenance(
     *,
     backend: str = "native-naive",
     block_size: int = 16,
+    worker_count: int = 1,
     timing_provenance: str = "not_measured",
     include_comparison: bool = True,
 ) -> dict[str, str]:
-    metadata = dict(_native_runtime.runtime_metadata(backend, block_size))
+    metadata = dict(_native_runtime.runtime_metadata(backend, block_size, worker_count))
     provenance = {
         "backend": backend,
         "kernel": str(metadata["kernel"]),
         "compiler": str(metadata["compiler"]),
         "cxx_standard": str(metadata["cxx_standard"]),
         "block_size": str(metadata["block_size"]),
+        "worker_count": str(metadata["worker_count"]),
         "platform": platform.platform(),
         "model_sha256": model_sha256,
         "timing_provenance": timing_provenance,
@@ -99,5 +115,28 @@ def runtime_provenance(
                 )
                 provenance["blocked_median_us"] = str(
                     comparison["latency"]["native-blocked"]["median_us"]
+                )
+    if backend == "native-parallel-blocked" and include_comparison:
+        comparison_path = (
+            Path(__file__).resolve().parents[2]
+            / "artifacts"
+            / "issue-11"
+            / "native-parallel-comparison.json"
+        )
+        if comparison_path.is_file():
+            comparison = json.loads(comparison_path.read_text())
+            provenance["comparison_evidence"] = (
+                "artifacts/issue-11/native-parallel-comparison.json"
+            )
+            provenance["comparison_correctness"] = str(comparison["correctness_gate"])
+            provenance["saved_input_sha256"] = str(comparison["saved_input_sha256"])
+            if comparison["correctness_gate"] == "passed" and comparison["latency"]:
+                provenance["timing_provenance"] = str(comparison["timing_provenance"])
+                provenance["serial_blocked_median_us"] = str(
+                    comparison["latency"]["native-blocked"]["median_us"]
+                )
+                key = f"native-parallel-blocked-{worker_count}"
+                provenance["parallel_median_us"] = str(
+                    comparison["latency"][key]["median_us"]
                 )
     return provenance
