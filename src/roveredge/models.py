@@ -1,9 +1,19 @@
 from dataclasses import dataclass
 from typing import Literal
 
-MissionOutcome = Literal["completed", "timed_out"]
+MissionOutcome = Literal["completed", "timed_out", "collision", "unreachable"]
 TestVerdict = Literal["passed", "failed"]
-EventKind = Literal["phase_changed", "pose_sample", "observation_captured", "terminal"]
+FailureCode = Literal["collision", "unreachable", "timeout"]
+EventKind = Literal[
+    "phase_changed",
+    "pose_sample",
+    "observation_captured",
+    "terminal",
+    "route_planned",
+    "range_sampled",
+    "braking_started",
+    "collision",
+]
 MissionPhase = Literal[
     "approaching_target",
     "aligning_to_target",
@@ -14,6 +24,8 @@ MissionPhase = Literal[
     "aligning_at_dock",
     "completed",
     "timed_out",
+    "collision",
+    "unreachable",
 ]
 
 
@@ -22,6 +34,12 @@ class Pose:
     x_m: float
     y_m: float
     heading_rad: float
+
+
+@dataclass(frozen=True)
+class Point:
+    x_m: float
+    y_m: float
 
 
 @dataclass(frozen=True)
@@ -60,7 +78,17 @@ class DockConfiguration:
 @dataclass(frozen=True)
 class RunConfiguration:
     simulation_step_s: float = 0.05
+    physics_step_s: float = 0.005
+    planning_period_s: float = 0.05
+    rover_radius_m: float = 0.2
     motion: MotionConfiguration = MotionConfiguration()
+    max_linear_acceleration_mps2: float = 0.8
+    max_braking_deceleration_mps2: float = 1.2
+    max_angular_acceleration_radps2: float = 1.6
+    range_ray_count: int = 16
+    range_max_m: float = 4.0
+    route_grid_resolution_m: float = 0.1
+    planning_clearance_m: float = 0.05
     inspection: InspectionConfiguration = InspectionConfiguration()
     dock: DockConfiguration = DockConfiguration()
     timeout_s: float = 120.0
@@ -68,6 +96,18 @@ class RunConfiguration:
     def __post_init__(self) -> None:
         if self.simulation_step_s <= 0:
             raise ValueError("simulation step must be positive")
+        if self.physics_step_s <= 0 or self.planning_period_s <= 0:
+            raise ValueError("physics and planning periods must be positive")
+        if self.rover_radius_m <= 0:
+            raise ValueError("rover radius must be positive")
+        if self.max_linear_acceleration_mps2 <= 0 or self.max_braking_deceleration_mps2 <= 0:
+            raise ValueError("linear acceleration and braking limits must be positive")
+        if self.max_angular_acceleration_radps2 <= 0:
+            raise ValueError("angular acceleration limit must be positive")
+        if self.range_ray_count <= 0 or self.range_max_m <= 0:
+            raise ValueError("range sensor configuration must be positive")
+        if self.route_grid_resolution_m <= 0 or self.planning_clearance_m < 0:
+            raise ValueError("route grid resolution must be positive and clearance nonnegative")
         if self.timeout_s <= 0:
             raise ValueError("mission timeout must be positive")
 
@@ -90,6 +130,10 @@ class TraceEvent:
     pose: Pose
     linear_velocity_mps: float
     angular_velocity_radps: float
+    commanded_linear_velocity_mps: float = 0.0
+    commanded_angular_velocity_radps: float = 0.0
+    range_readings_m: tuple[float, ...] | None = None
+    detail: str | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +145,15 @@ class InspectionObservation:
 
 
 @dataclass(frozen=True)
+class TerminalFailure:
+    code: FailureCode
+    message: str
+    pose: Pose
+    obstacle_id: str | None = None
+    contact_point: Point | None = None
+
+
+@dataclass(frozen=True)
 class RunResult:
     run_id: str
     request: RunRequest
@@ -109,3 +162,5 @@ class RunResult:
     mission_outcome: MissionOutcome
     test_verdict: TestVerdict
     terminal_reason: str
+    planned_routes: tuple[tuple[Pose, ...], ...] = ()
+    terminal_failure: TerminalFailure | None = None

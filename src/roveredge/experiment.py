@@ -41,6 +41,16 @@ def timeout_run_request() -> RunRequest:
 
 
 def run_experiment(request: RunRequest) -> RunResult:
+    if request.scenario_version in {
+        "preset-open-v2",
+        "preset-narrow-v1",
+        "preset-cluttered-v1",
+        "fixture-unreachable-v1",
+        "fixture-collision-stop-v1",
+    }:
+        from .physical import run_physical_experiment
+
+        return run_physical_experiment(request)
     if request.scenario_version != PRESET_SCENARIO_VERSION:
         raise ValueError(f"unsupported scenario version: {request.scenario_version}")
     if request.target_id != PRESET_TARGET_ID:
