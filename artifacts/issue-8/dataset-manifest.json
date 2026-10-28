@@ -1,0 +1,64 @@
+{
+  "candidates_per_state": 8,
+  "family_seed_derivation": "first 8 bytes of SHA-256(family_id), big-endian",
+  "feature_order": [
+    "range_00_m",
+    "range_01_m",
+    "range_02_m",
+    "range_03_m",
+    "range_04_m",
+    "range_05_m",
+    "range_06_m",
+    "range_07_m",
+    "range_08_m",
+    "range_09_m",
+    "range_10_m",
+    "range_11_m",
+    "range_12_m",
+    "range_13_m",
+    "range_14_m",
+    "range_15_m",
+    "linear_velocity_mps",
+    "angular_velocity_radps",
+    "waypoint_x_rover_m",
+    "waypoint_y_rover_m",
+    "candidate_linear_velocity_mps",
+    "candidate_angular_velocity_radps",
+    "previous_linear_command_mps",
+    "previous_angular_command_radps"
+  ],
+  "final_test_families": [
+    "final-family-00",
+    "final-family-01",
+    "final-family-02"
+  ],
+  "final_test_status": "untouched",
+  "generated_row_hashes": {
+    "train": "99811006663e428ba40babe17891702713f2633029f61e9e06cdb7fec61df7dc",
+    "validation": "f021f1964225596abde144f4e6018d395672198f1bc1925b6060c0ccb366fa2d"
+  },
+  "generator_version": "synthetic-risk-generator-v1",
+  "label_contract": "collision during immediate one-second rollout",
+  "samples_per_family": 64,
+  "split_hashes": {
+    "final_test": "56bce9ceffeaeb7026e6ff97610583162d0f9ae569a3034be25d797e90ad01cb",
+    "train": "918c46b49310f4ae1f187a16ac09fa27aaa876a6373fda43bd519f79ec338b80",
+    "validation": "de1cdb76742ffd35a38bcdd538341818cb18270906b4f6b014d5220bd855f62e"
+  },
+  "train_families": [
+    "train-family-00",
+    "train-family-01",
+    "train-family-02",
+    "train-family-03",
+    "train-family-04",
+    "train-family-05",
+    "train-family-06",
+    "train-family-07"
+  ],
+  "validation_families": [
+    "validation-family-00",
+    "validation-family-01",
+    "validation-family-02"
+  ],
+  "version": "risk-dataset-v1"
+}

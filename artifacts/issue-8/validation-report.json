@@ -1,0 +1,34 @@
+{
+  "examples": 1536,
+  "false_negatives": 17,
+  "final_test_status": "untouched",
+  "mean_safe_progress_score": 0.19479061646234797,
+  "metric_definitions": {
+    "false_negatives": "selected accepted commands whose rollout label is collision",
+    "mean_safe_progress_score": "mean dimensionless distance-and-alignment progress score for safe selected commands",
+    "unnecessary_stops": "brake selections where a moving collision-free candidate exists"
+  },
+  "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
+  "proposed_quality_requirements": {
+    "false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3
+  },
+  "quality_gate_status": "not_met",
+  "selected_risk_cutoff": 0.05,
+  "states": 192,
+  "training": {
+    "device": "cpu",
+    "epochs": 300,
+    "learning_rate": 0.01,
+    "loss": "BCEWithLogitsLoss",
+    "modal_execution": "not_used",
+    "numpy_version": "2.5.4",
+    "optimizer": "Adam",
+    "positive_weighting": "negative_count / positive_count from training split",
+    "python_version": "3.12.13",
+    "seed": 20261028,
+    "torch_version": "2.15.0"
+  },
+  "unnecessary_stops": 2
+}

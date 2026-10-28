@@ -25,6 +25,7 @@ const configuration = {
   },
   dock: { position_tolerance_m: 0.15, heading_tolerance_rad: 0.2617993877991494 },
   timeout_s: 120,
+  controller_kind: "geometric" as const,
 };
 
 const scenario: Scenario = {
@@ -249,6 +250,63 @@ describe("mission replay application", () => {
     expect(root.querySelector("[data-field='scenario']")?.textContent).toContain(
       "preset-narrow-v1",
     );
+  });
+
+  test("requests the learned controller and displays its model evidence", async () => {
+    const learnedResult: RunResult = {
+      ...result,
+      request: {
+        ...result.request,
+        configuration: {
+          ...result.request.configuration,
+          controller_kind: "learned_collision_risk",
+        },
+      },
+      controller_kind: "learned_collision_risk",
+      model_version: "risk-model-v1",
+      model_sha256: "abcdef0123456789",
+      validation_evidence_reference: "artifacts/issue-8/validation-report.json",
+      validation_quality_gate_status: "not_met",
+      trace: result.trace.map((event, index) =>
+        index === 0
+          ? {
+              ...event,
+              kind: "control_decision",
+              candidate_risks: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8],
+              selected_candidate_index: 1,
+              selected_risk: 0.2,
+              selected_progress_score: 0.2,
+              risk_cutoff: 0.25,
+              detail: "acceptable candidate with maximum kinematic progress",
+            }
+          : event,
+      ),
+    };
+    const run = vi.fn(async () => learnedResult);
+    const api: RoverEdgeApi = { getScenarios: async () => [scenario], run };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='learned']")!);
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith({
+        ...scenario.default_run_request,
+        configuration: {
+          ...scenario.default_run_request.configuration,
+          controller_kind: "learned_collision_risk",
+        },
+      }),
+    );
+    expect(root.querySelector("[data-field='controller']")?.textContent).toContain(
+      "learned_collision_risk",
+    );
+    expect(root.querySelector("[data-field='model']")?.textContent).toContain("risk-model-v1");
+    expect(root.querySelector("[data-field='validation']")?.textContent).toContain("not_met");
+    expect(root.querySelector("[data-field='decision']")?.textContent).toContain("candidate 1");
+    expect(root.querySelector("[data-field='decision']")?.textContent).toContain("cutoff 0.25");
   });
 
   test("displays recorded physical failure evidence", async () => {

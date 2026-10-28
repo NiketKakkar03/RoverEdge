@@ -1,4 +1,4 @@
-.PHONY: setup dev check
+.PHONY: setup dev check train-risk-model
 
 setup:
 	uv sync
@@ -14,3 +14,6 @@ check:
 	uv run ruff check src tests
 	pnpm test:web
 	pnpm build:web
+
+train-risk-model:
+	uv run python scripts/train_risk_model.py

@@ -52,6 +52,11 @@ export interface RunRequest {
     };
     dock: { position_tolerance_m: number; heading_tolerance_rad: number };
     timeout_s: number;
+    controller_kind: "geometric" | "learned_collision_risk";
+    model_artifact_version?: string | null;
+    model_sha256?: string | null;
+    risk_cutoff?: number | null;
+    candidate_set_id?: string | null;
   };
   expected_mission_outcome: "completed" | "timed_out" | "collision" | "unreachable";
 }
@@ -65,7 +70,8 @@ interface TraceEvent extends ReplayEvent {
     | "route_planned"
     | "range_sampled"
     | "braking_started"
-    | "collision";
+    | "collision"
+    | "control_decision";
   pose: Pose;
   linear_velocity_mps: number;
   angular_velocity_radps: number;
@@ -73,6 +79,11 @@ interface TraceEvent extends ReplayEvent {
   commanded_angular_velocity_radps?: number;
   range_readings_m?: number[] | null;
   detail?: string | null;
+  candidate_risks?: number[] | null;
+  selected_candidate_index?: number | null;
+  risk_cutoff?: number | null;
+  selected_risk?: number | null;
+  selected_progress_score?: number | null;
 }
 
 export interface RunResult {
@@ -89,6 +100,11 @@ export interface RunResult {
   test_verdict: "passed" | "failed";
   terminal_reason: string;
   planned_routes: Pose[][];
+  controller_kind?: "geometric" | "learned_collision_risk";
+  model_version?: string | null;
+  model_sha256?: string | null;
+  validation_evidence_reference?: string | null;
+  validation_quality_gate_status?: "met" | "not_met" | null;
   terminal_failure?: {
     code: "collision" | "unreachable" | "timeout";
     message: string;
@@ -147,12 +163,28 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     const replayEvidence = result.trace
       .slice(0, event.sequence + 1)
       .reverse()
-      .find((item) => item.kind === "braking_started" || item.kind === "collision");
+      .find(
+        (item) =>
+          item.kind === "control_decision" ||
+          item.kind === "braking_started" ||
+          item.kind === "collision",
+      );
     setText(
       root,
       "replay-evidence",
       replayEvidence
         ? `${humanize(replayEvidence.kind)}: ${replayEvidence.detail ?? "recorded"}`
+        : "None",
+    );
+    const decision = result.trace
+      .slice(0, event.sequence + 1)
+      .reverse()
+      .find((item) => item.kind === "control_decision");
+    setText(
+      root,
+      "decision",
+      decision?.candidate_risks && decision.selected_candidate_index != null
+        ? `candidate ${decision.selected_candidate_index} · risk ${decision.selected_risk?.toFixed(4)} · progress score ${decision.selected_progress_score?.toFixed(3)} · cutoff ${decision.risk_cutoff?.toFixed(2)} · [${decision.candidate_risks.map((risk) => risk.toFixed(3)).join(", ")}]`
         : "None",
     );
   };
@@ -191,6 +223,21 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     setText(root, "configuration", formatConfiguration(result.request));
     setText(root, "outcome", result.mission_outcome);
     setText(root, "verdict", result.test_verdict);
+    setText(root, "controller", result.controller_kind ?? result.request.configuration.controller_kind);
+    setText(
+      root,
+      "model",
+      result.model_version && result.model_sha256
+        ? `${result.model_version} · ${result.model_sha256.slice(0, 12)}…`
+        : "Not used",
+    );
+    setText(
+      root,
+      "validation",
+      result.validation_evidence_reference && result.validation_quality_gate_status
+        ? `${result.validation_quality_gate_status} · ${result.validation_evidence_reference}`
+        : "Not applicable",
+    );
     setText(
       root,
       "phases",
@@ -209,6 +256,19 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   root
     .querySelector("[data-action='start']")!
     .addEventListener("click", () => void run(() => api.run(scenario.default_run_request)));
+  root
+    .querySelector("[data-action='learned']")!
+    .addEventListener("click", () =>
+      void run(() =>
+        api.run({
+          ...scenario.default_run_request,
+          configuration: {
+            ...scenario.default_run_request.configuration,
+            controller_kind: "learned_collision_risk",
+          },
+        }),
+      ),
+    );
   selector.addEventListener("change", () => {
     scenario = scenarios.find((item) => item.scenario_version === selector.value)!;
     showScenario();
@@ -274,6 +334,7 @@ function formatConfiguration(request: RunRequest): string {
     `${configuration.dock.position_tolerance_m} m dock position tolerance`,
     `${configuration.dock.heading_tolerance_rad} rad dock heading tolerance`,
     `${configuration.timeout_s} s timeout`,
+    `${humanize(configuration.controller_kind)} controller`,
   ].join(" · ");
 }
 
@@ -378,6 +439,7 @@ function applicationMarkup(): string {
       <label>Scenario <select data-action="scenario" aria-label="Scenario"></select></label>
       <div class="actions">
         <button data-action="start">Start run</button>
+        <button data-action="learned">Run learned controller</button>
         <button data-action="timeout" class="secondary">Run expected timeout</button>
       </div>
     </section>
@@ -391,10 +453,14 @@ function applicationMarkup(): string {
           <dt>Seed</dt><dd data-field="seed">—</dd>
           <dt>Expectation</dt><dd data-field="expectation">—</dd>
           <dt>Configuration</dt><dd data-field="configuration">—</dd>
+          <dt>Controller</dt><dd data-field="controller">—</dd>
+          <dt>Risk model</dt><dd data-field="model">Not used</dd>
+          <dt>Validation evidence</dt><dd data-field="validation">Not applicable</dd>
           <dt>Phase</dt><dd data-field="phase">Not started</dd>
           <dt>Simulated time</dt><dd data-field="time">0.00 s</dd>
           <dt>Motion</dt><dd data-field="motion">0.000 m/s · 0.000 rad/s</dd>
           <dt>Replay evidence</dt><dd data-field="replay-evidence">None</dd>
+          <dt>Learned decision</dt><dd data-field="decision">None</dd>
           <dt>Mission outcome</dt><dd data-field="outcome">—</dd>
           <dt>Test verdict</dt><dd data-field="verdict">—</dd>
           <dt>Terminal failure</dt><dd data-field="failure">None</dd>
