@@ -6,8 +6,32 @@ from fastapi.staticfiles import StaticFiles
 
 from .experiment import preset_run_request, run_experiment
 from .models import RunRequest, RunResult
+from .scenarios import SCENARIOS, Scenario, physical_run_request
 
 app = FastAPI(title="RoverEdge", version="0.1.0")
+
+
+def _scenario_document(scenario: Scenario) -> dict[str, object]:
+    return {
+        "scenario_version": scenario.scenario_version,
+        "name": scenario.name,
+        "map_bounds_m": {"width": scenario.width_m, "height": scenario.height_m},
+        "dock_pose": asdict(scenario.dock_pose),
+        "target": {
+            "id": "preset-storage-container",
+            "label": "Storage container",
+            "center_m": {"x": 6.5, "y": 3.0},
+            "size_m": {"width": 0.6, "height": 1.0},
+        },
+        "inspection_pose": asdict(scenario.inspection_pose),
+        "obstacles": [asdict(obstacle) for obstacle in scenario.obstacles],
+        "default_run_request": asdict(physical_run_request(scenario.scenario_version)),
+    }
+
+
+@app.get("/api/scenarios")
+def get_scenarios() -> list[dict[str, object]]:
+    return [_scenario_document(scenario) for scenario in SCENARIOS.values()]
 
 
 @app.get("/api/scenarios/preset-open")

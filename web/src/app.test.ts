@@ -5,11 +5,35 @@ import { describe, expect, test, vi } from "vitest";
 
 import { httpApi, mountApp, type RoverEdgeApi, type RunResult, type Scenario } from "./app";
 
+const configuration = {
+  simulation_step_s: 0.05,
+  physics_step_s: 0.005,
+  planning_period_s: 0.05,
+  rover_radius_m: 0.2,
+  motion: { max_linear_speed_mps: 0.6, max_angular_speed_radps: 0.8 },
+  max_linear_acceleration_mps2: 0.8,
+  max_braking_deceleration_mps2: 1.2,
+  max_angular_acceleration_radps2: 1.6,
+  range_ray_count: 16,
+  range_max_m: 4,
+  route_grid_resolution_m: 0.1,
+  planning_clearance_m: 0.05,
+  inspection: {
+    position_tolerance_m: 0.15,
+    heading_tolerance_rad: 0.2617993877991494,
+    dwell_s: 1,
+  },
+  dock: { position_tolerance_m: 0.15, heading_tolerance_rad: 0.2617993877991494 },
+  timeout_s: 120,
+};
+
 const scenario: Scenario = {
   scenario_version: "preset-open-v1",
   name: "Open inspection lane",
   map_bounds_m: { width: 8, height: 6 },
   dock_pose: { x_m: 1, y_m: 3, heading_rad: 0 },
+  inspection_pose: { x_m: 5.5, y_m: 3, heading_rad: 0 },
+  obstacles: [],
   target: {
     id: "preset-storage-container",
     label: "Storage container",
@@ -20,17 +44,7 @@ const scenario: Scenario = {
     scenario_version: "preset-open-v1",
     target_id: "preset-storage-container",
     simulation_seed: 20261027,
-    configuration: {
-      simulation_step_s: 0.05,
-      motion: { max_linear_speed_mps: 0.6, max_angular_speed_radps: 0.8 },
-      inspection: {
-        position_tolerance_m: 0.15,
-        heading_tolerance_rad: 0.2617993877991494,
-        dwell_s: 1,
-      },
-      dock: { position_tolerance_m: 0.15, heading_tolerance_rad: 0.2617993877991494 },
-      timeout_s: 120,
-    },
+    configuration,
     expected_mission_outcome: "completed",
   },
 };
@@ -52,17 +66,7 @@ const result: RunResult = {
     scenario_version: "preset-open-v1",
     target_id: "preset-storage-container",
     simulation_seed: 20261027,
-    configuration: {
-      simulation_step_s: 0.05,
-      motion: { max_linear_speed_mps: 0.6, max_angular_speed_radps: 0.8 },
-      inspection: {
-        position_tolerance_m: 0.15,
-        heading_tolerance_rad: 0.2617993877991494,
-        dwell_s: 1,
-      },
-      dock: { position_tolerance_m: 0.15, heading_tolerance_rad: 0.2617993877991494 },
-      timeout_s: 120,
-    },
+    configuration,
     expected_mission_outcome: "completed",
   },
   trace: phases.map((phase, sequence) => ({
@@ -85,6 +89,10 @@ const result: RunResult = {
   mission_outcome: "completed",
   test_verdict: "passed",
   terminal_reason: "inspection captured and rover returned to dock",
+  planned_routes: [
+    [scenario.dock_pose, scenario.inspection_pose],
+    [scenario.inspection_pose, scenario.dock_pose],
+  ],
 };
 
 const timeoutResult: RunResult = {
@@ -111,10 +119,49 @@ const timeoutResult: RunResult = {
   terminal_reason: "mission exceeded its simulated-time limit",
 };
 
+const collisionResult: RunResult = {
+  ...result,
+  run_id: "run-collision-test",
+  request: { ...result.request, expected_mission_outcome: "collision" },
+  trace: [
+    {
+      ...result.trace[0]!,
+      phase: "approaching_target",
+      kind: "braking_started",
+      detail: "forward range requires physical deceleration",
+    },
+    {
+      ...result.trace[0]!,
+      sequence: 1,
+      phase: "collision",
+      kind: "collision",
+      detail: "swept rover contact with obstacle near-obstacle",
+    },
+    {
+      ...result.trace[0]!,
+      sequence: 2,
+      phase: "collision",
+      kind: "terminal",
+      detail: "swept rover contact with obstacle near-obstacle",
+    },
+  ],
+  observations: [],
+  mission_outcome: "collision",
+  test_verdict: "passed",
+  terminal_reason: "insufficient stopping distance before obstacle near-obstacle",
+  terminal_failure: {
+    code: "collision",
+    message: "insufficient stopping distance before obstacle near-obstacle",
+    pose: { x_m: 1.1, y_m: 3, heading_rad: 0 },
+    obstacle_id: "near-obstacle",
+    contact_point: { x_m: 1.3, y_m: 3 },
+  },
+};
+
 describe("mission replay application", () => {
   test("starts a run and displays recorded phases and terminal evidence", async () => {
     const api: RoverEdgeApi = {
-      getPresetScenario: async () => scenario,
+      getScenarios: async () => [scenario],
       run: async (request) =>
         request.expected_mission_outcome === "timed_out" ? timeoutResult : result,
     };
@@ -167,10 +214,77 @@ describe("mission replay application", () => {
     expect(root.querySelector("[data-field='expectation']")?.textContent).toContain("timed_out");
   });
 
+  test("selects a fixed obstacle scenario and runs its server-owned request", async () => {
+    const narrow: Scenario = {
+      ...scenario,
+      scenario_version: "preset-narrow-v1",
+      name: "Narrow inspection corridor",
+      obstacles: [
+        {
+          obstacle_id: "upper-block",
+          x_min_m: 2.5,
+          y_min_m: 3.4,
+          x_max_m: 5,
+          y_max_m: 5.5,
+        },
+      ],
+      default_run_request: {
+        ...scenario.default_run_request,
+        scenario_version: "preset-narrow-v1",
+      },
+    };
+    const run = vi.fn(async () => result);
+    const api: RoverEdgeApi = { getScenarios: async () => [scenario, narrow], run };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.change(root.querySelector("[data-action='scenario']")!, {
+      target: { value: "preset-narrow-v1" },
+    });
+    fireEvent.click(root.querySelector("[data-action='start']")!);
+
+    await waitFor(() => expect(run).toHaveBeenCalledWith(narrow.default_run_request));
+    expect(root.querySelector("[data-field='scenario']")?.textContent).toContain(
+      "preset-narrow-v1",
+    );
+  });
+
+  test("displays recorded physical failure evidence", async () => {
+    const collisionScenario: Scenario = {
+      ...scenario,
+      scenario_version: "fixture-collision-stop-v1",
+      name: "Insufficient stopping distance fixture",
+      default_run_request: collisionResult.request,
+    };
+    const api: RoverEdgeApi = {
+      getScenarios: async () => [collisionScenario],
+      run: async () => collisionResult,
+    };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector("[data-action='start']")!);
+
+    await waitFor(() => {
+      expect(root.querySelector("[data-field='failure']")?.textContent).toContain("collision");
+    });
+    expect(root.querySelector("[data-field='status']")?.textContent).toContain(
+      "stopping distance",
+    );
+    expect(root.querySelector("[data-field='replay-evidence']")?.textContent).toContain(
+      "braking started",
+    );
+    expect(root.querySelector("[data-field='verdict']")?.textContent).toBe("passed");
+  });
+
   test("browser serializes the server-owned request through the HTTP adapter", async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(Response.json(scenario))
+      .mockResolvedValueOnce(Response.json([scenario]))
       .mockResolvedValueOnce(Response.json(result));
     vi.stubGlobal("fetch", fetchMock);
     document.body.innerHTML = '<main id="app"></main>';
@@ -181,7 +295,7 @@ describe("mission replay application", () => {
     fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='start']")!);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/scenarios/preset-open");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/scenarios");
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/runs");
     const requestOptions = fetchMock.mock.calls[1]?.[1];
     expect(JSON.parse(String(requestOptions?.body))).toEqual(scenario.default_run_request);

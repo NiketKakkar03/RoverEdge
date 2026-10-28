@@ -2,7 +2,7 @@ from dataclasses import asdict
 
 from fastapi.testclient import TestClient
 
-from roveredge import preset_run_request
+from roveredge import physical_run_request, preset_run_request
 from roveredge.api import app
 
 
@@ -54,3 +54,28 @@ def test_browser_api_rejects_unknown_scenario_identity() -> None:
     response = client.post("/api/runs", json=invalid_request)
 
     assert response.status_code == 422
+
+
+def test_browser_api_lists_versioned_physical_scenarios_with_geometry() -> None:
+    client = TestClient(app)
+
+    response = client.get("/api/scenarios")
+
+    assert response.status_code == 200
+    scenarios = response.json()
+    assert [scenario["scenario_version"] for scenario in scenarios] == [
+        "preset-open-v2",
+        "preset-narrow-v1",
+        "preset-cluttered-v1",
+        "fixture-unreachable-v1",
+        "fixture-collision-stop-v1",
+    ]
+    narrow = scenarios[1]
+    assert narrow["obstacles"][0] == {
+        "obstacle_id": "upper-block",
+        "x_min_m": 2.5,
+        "y_min_m": 3.4,
+        "x_max_m": 5.0,
+        "y_max_m": 5.5,
+    }
+    assert narrow["default_run_request"] == asdict(physical_run_request("preset-narrow-v1"))

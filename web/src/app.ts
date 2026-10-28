@@ -11,6 +11,14 @@ export interface Scenario {
   name: string;
   map_bounds_m: { width: number; height: number };
   dock_pose: Pose;
+  inspection_pose: Pose;
+  obstacles: Array<{
+    obstacle_id: string;
+    x_min_m: number;
+    y_min_m: number;
+    x_max_m: number;
+    y_max_m: number;
+  }>;
   target: {
     id: string;
     label: string;
@@ -26,7 +34,17 @@ export interface RunRequest {
   simulation_seed: number;
   configuration: {
     simulation_step_s: number;
+    physics_step_s: number;
+    planning_period_s: number;
+    rover_radius_m: number;
     motion: { max_linear_speed_mps: number; max_angular_speed_radps: number };
+    max_linear_acceleration_mps2: number;
+    max_braking_deceleration_mps2: number;
+    max_angular_acceleration_radps2: number;
+    range_ray_count: number;
+    range_max_m: number;
+    route_grid_resolution_m: number;
+    planning_clearance_m: number;
     inspection: {
       position_tolerance_m: number;
       heading_tolerance_rad: number;
@@ -35,14 +53,26 @@ export interface RunRequest {
     dock: { position_tolerance_m: number; heading_tolerance_rad: number };
     timeout_s: number;
   };
-  expected_mission_outcome: "completed" | "timed_out";
+  expected_mission_outcome: "completed" | "timed_out" | "collision" | "unreachable";
 }
 
 interface TraceEvent extends ReplayEvent {
-  kind: "phase_changed" | "pose_sample" | "observation_captured" | "terminal";
+  kind:
+    | "phase_changed"
+    | "pose_sample"
+    | "observation_captured"
+    | "terminal"
+    | "route_planned"
+    | "range_sampled"
+    | "braking_started"
+    | "collision";
   pose: Pose;
   linear_velocity_mps: number;
   angular_velocity_radps: number;
+  commanded_linear_velocity_mps?: number;
+  commanded_angular_velocity_radps?: number;
+  range_readings_m?: number[] | null;
+  detail?: string | null;
 }
 
 export interface RunResult {
@@ -55,19 +85,27 @@ export interface RunResult {
     simulated_time_s: number;
     completion_status: "captured";
   }>;
-  mission_outcome: "completed" | "timed_out";
+  mission_outcome: "completed" | "timed_out" | "collision" | "unreachable";
   test_verdict: "passed" | "failed";
   terminal_reason: string;
+  planned_routes: Pose[][];
+  terminal_failure?: {
+    code: "collision" | "unreachable" | "timeout";
+    message: string;
+    pose: Pose;
+    obstacle_id?: string | null;
+    contact_point?: { x_m: number; y_m: number } | null;
+  } | null;
 }
 
 export interface RoverEdgeApi {
-  getPresetScenario(): Promise<Scenario>;
+  getScenarios(): Promise<Scenario[]>;
   run(request: RunRequest): Promise<RunResult>;
 }
 
 export const httpApi: RoverEdgeApi = {
-  async getPresetScenario() {
-    return requestJson<Scenario>("/api/scenarios/preset-open");
+  async getScenarios() {
+    return requestJson<Scenario[]>("/api/scenarios");
   },
   async run(request) {
     return requestJson<RunResult>("/api/runs", request);
@@ -76,9 +114,17 @@ export const httpApi: RoverEdgeApi = {
 
 export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): Promise<void> {
   root.innerHTML = applicationMarkup();
-  const scenario = await api.getPresetScenario();
-  setText(root, "scenario", `${scenario.name} · ${scenario.scenario_version}`);
-  setText(root, "target", scenario.target.label);
+  const scenarios = await api.getScenarios();
+  let scenario = scenarios[0]!;
+  const selector = root.querySelector<HTMLSelectElement>("[data-action='scenario']")!;
+  for (const available of scenarios) {
+    selector.add(new Option(available.name, available.scenario_version));
+  }
+  const showScenario = (): void => {
+    setText(root, "scenario", `${scenario.name} · ${scenario.scenario_version}`);
+    setText(root, "target", scenario.target.label);
+  };
+  showScenario();
 
   let result: RunResult | undefined;
   let replay: ReplayController | undefined;
@@ -92,7 +138,23 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     setText(root, "time", `${event.simulated_time_s.toFixed(2)} s`);
     const slider = root.querySelector<HTMLInputElement>("[data-action='scrub']")!;
     slider.value = String(event.simulated_time_s);
-    drawScene(root.querySelector("canvas")!, scenario, event);
+    drawScene(root.querySelector("canvas")!, scenario, result, event);
+    setText(
+      root,
+      "motion",
+      `${event.linear_velocity_mps.toFixed(3)} m/s · ${event.angular_velocity_radps.toFixed(3)} rad/s`,
+    );
+    const replayEvidence = result.trace
+      .slice(0, event.sequence + 1)
+      .reverse()
+      .find((item) => item.kind === "braking_started" || item.kind === "collision");
+    setText(
+      root,
+      "replay-evidence",
+      replayEvidence
+        ? `${humanize(replayEvidence.kind)}: ${replayEvidence.detail ?? "recorded"}`
+        : "None",
+    );
   };
 
   const animate = (timestamp: number): void => {
@@ -115,6 +177,13 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     replayStartedAt = 0;
     replayStartTime = 0;
     setText(root, "status", result.terminal_reason);
+    setText(
+      root,
+      "failure",
+      result.terminal_failure
+        ? `${result.terminal_failure.code}: ${result.terminal_failure.message}`
+        : "None",
+    );
     setText(root, "run-id", result.run_id);
     setText(root, "scenario-version", result.request.scenario_version);
     setText(root, "seed", String(result.request.simulation_seed));
@@ -140,6 +209,10 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   root
     .querySelector("[data-action='start']")!
     .addEventListener("click", () => void run(() => api.run(scenario.default_run_request)));
+  selector.addEventListener("change", () => {
+    scenario = scenarios.find((item) => item.scenario_version === selector.value)!;
+    showScenario();
+  });
   root
     .querySelector("[data-action='timeout']")!
     .addEventListener("click", () =>
@@ -191,6 +264,8 @@ function formatConfiguration(request: RunRequest): string {
   const { configuration } = request;
   return [
     `${configuration.simulation_step_s * 1000} ms step`,
+    `${configuration.physics_step_s * 1000} ms physics`,
+    `${configuration.planning_period_s * 1000} ms planning`,
     `${configuration.motion.max_linear_speed_mps} m/s linear max`,
     `${configuration.motion.max_angular_speed_radps} rad/s angular max`,
     `${configuration.inspection.position_tolerance_m} m inspection position tolerance`,
@@ -202,7 +277,12 @@ function formatConfiguration(request: RunRequest): string {
   ].join(" · ");
 }
 
-function drawScene(canvas: HTMLCanvasElement, scenario: Scenario, event: TraceEvent): void {
+function drawScene(
+  canvas: HTMLCanvasElement,
+  scenario: Scenario,
+  result: RunResult,
+  event: TraceEvent,
+): void {
   let context: CanvasRenderingContext2D | null = null;
   try {
     context = canvas.getContext("2d");
@@ -215,6 +295,27 @@ function drawScene(canvas: HTMLCanvasElement, scenario: Scenario, event: TraceEv
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.fillStyle = "#ecf3ee";
   context.fillRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#6b746f";
+  for (const obstacle of scenario.obstacles) {
+    context.fillRect(
+      obstacle.x_min_m * scaleX,
+      obstacle.y_min_m * scaleY,
+      (obstacle.x_max_m - obstacle.x_min_m) * scaleX,
+      (obstacle.y_max_m - obstacle.y_min_m) * scaleY,
+    );
+  }
+  context.strokeStyle = "#3d6d8c";
+  context.lineWidth = 2;
+  for (const route of result.planned_routes) {
+    context.beginPath();
+    route.forEach((waypoint, index) => {
+      const x = waypoint.x_m * scaleX;
+      const y = waypoint.y_m * scaleY;
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.stroke();
+  }
   context.fillStyle = "#d36b3f";
   context.fillRect(
     (scenario.target.center_m.x - scenario.target.size_m.width / 2) * scaleX,
@@ -234,6 +335,37 @@ function drawScene(canvas: HTMLCanvasElement, scenario: Scenario, event: TraceEv
     event.pose.y_m * scaleY + Math.sin(event.pose.heading_rad) * 18,
   );
   context.stroke();
+  const rangeEvent = result.trace
+    .slice(0, event.sequence + 1)
+    .reverse()
+    .find((item) => item.kind === "range_sampled" && item.range_readings_m);
+  if (rangeEvent?.range_readings_m) {
+    context.strokeStyle = "rgba(211, 107, 63, 0.35)";
+    context.lineWidth = 1;
+    rangeEvent.range_readings_m.forEach((distance, index) => {
+      const angle = rangeEvent.pose.heading_rad + (index * 2 * Math.PI) / rangeEvent.range_readings_m!.length;
+      context.beginPath();
+      context.moveTo(rangeEvent.pose.x_m * scaleX, rangeEvent.pose.y_m * scaleY);
+      context.lineTo(
+        (rangeEvent.pose.x_m + Math.cos(angle) * distance) * scaleX,
+        (rangeEvent.pose.y_m + Math.sin(angle) * distance) * scaleY,
+      );
+      context.stroke();
+    });
+  }
+  if (event.phase === "collision" && result.terminal_failure?.contact_point) {
+    context.strokeStyle = "#b42318";
+    context.lineWidth = 4;
+    context.beginPath();
+    context.arc(
+      result.terminal_failure.contact_point.x_m * scaleX,
+      result.terminal_failure.contact_point.y_m * scaleY,
+      9,
+      0,
+      Math.PI * 2,
+    );
+    context.stroke();
+  }
 }
 
 function applicationMarkup(): string {
@@ -243,6 +375,7 @@ function applicationMarkup(): string {
       <h1>Inspect and return</h1>
       <p data-field="scenario">Loading preset…</p>
       <p>Target: <strong data-field="target">—</strong></p>
+      <label>Scenario <select data-action="scenario" aria-label="Scenario"></select></label>
       <div class="actions">
         <button data-action="start">Start run</button>
         <button data-action="timeout" class="secondary">Run expected timeout</button>
@@ -260,8 +393,11 @@ function applicationMarkup(): string {
           <dt>Configuration</dt><dd data-field="configuration">—</dd>
           <dt>Phase</dt><dd data-field="phase">Not started</dd>
           <dt>Simulated time</dt><dd data-field="time">0.00 s</dd>
+          <dt>Motion</dt><dd data-field="motion">0.000 m/s · 0.000 rad/s</dd>
+          <dt>Replay evidence</dt><dd data-field="replay-evidence">None</dd>
           <dt>Mission outcome</dt><dd data-field="outcome">—</dd>
           <dt>Test verdict</dt><dd data-field="verdict">—</dd>
+          <dt>Terminal failure</dt><dd data-field="failure">None</dd>
         </dl>
         <p data-field="status">Ready to run.</p>
       </aside>
