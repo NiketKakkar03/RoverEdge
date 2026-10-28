@@ -13,7 +13,9 @@ EventKind = Literal[
     "range_sampled",
     "braking_started",
     "collision",
+    "control_decision",
 ]
+ControllerKind = Literal["geometric", "learned_collision_risk"]
 MissionPhase = Literal[
     "approaching_target",
     "aligning_to_target",
@@ -92,6 +94,11 @@ class RunConfiguration:
     inspection: InspectionConfiguration = InspectionConfiguration()
     dock: DockConfiguration = DockConfiguration()
     timeout_s: float = 120.0
+    controller_kind: ControllerKind = "geometric"
+    model_artifact_version: str | None = None
+    model_sha256: str | None = None
+    risk_cutoff: float | None = None
+    candidate_set_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.simulation_step_s <= 0:
@@ -134,6 +141,11 @@ class TraceEvent:
     commanded_angular_velocity_radps: float = 0.0
     range_readings_m: tuple[float, ...] | None = None
     detail: str | None = None
+    candidate_risks: tuple[float, ...] | None = None
+    selected_candidate_index: int | None = None
+    risk_cutoff: float | None = None
+    selected_risk: float | None = None
+    selected_progress_score: float | None = None
 
 
 @dataclass(frozen=True)
@@ -164,3 +176,8 @@ class RunResult:
     terminal_reason: str
     planned_routes: tuple[tuple[Pose, ...], ...] = ()
     terminal_failure: TerminalFailure | None = None
+    controller_kind: ControllerKind = "geometric"
+    model_version: str | None = None
+    model_sha256: str | None = None
+    validation_evidence_reference: str | None = None
+    validation_quality_gate_status: Literal["met", "not_met"] | None = None

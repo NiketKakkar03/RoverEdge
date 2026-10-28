@@ -1,8 +1,19 @@
 import math
 import uuid
 from dataclasses import replace
+from pathlib import Path
 
 from .geometry import first_swept_collision, ray_distance
+from .learning import (
+    CANDIDATE_COMMANDS,
+    LearningState,
+    RiskModelArtifact,
+    build_feature_vector,
+    candidate_progress_score,
+    load_risk_model,
+    predict_risk,
+    select_candidate,
+)
 from .models import (
     EventKind,
     InspectionObservation,
@@ -30,6 +41,14 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         raise ValueError(f"unsupported target: {request.target_id}")
 
     configuration = request.configuration
+    risk_model = (
+        _load_default_risk_model()
+        if configuration.controller_kind == "learned_collision_risk"
+        else None
+    )
+    if risk_model is not None:
+        request = _freeze_learned_configuration(request, risk_model)
+        configuration = request.configuration
     scenario = get_scenario(request.scenario_version)
     inflation = configuration.rover_radius_m + configuration.planning_clearance_m
     outbound_route = plan_route(
@@ -47,7 +66,7 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         inflation,
     )
     if outbound_route is None or return_route is None:
-        return _unreachable_result(request, scenario)
+        return _unreachable_result(request, scenario, risk_model)
 
     pose = scenario.initial_pose
     linear_velocity = scenario.initial_linear_velocity_mps
@@ -69,6 +88,11 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         kind: EventKind,
         detail: str | None = None,
         range_readings: tuple[float, ...] | None = None,
+        candidate_risks: tuple[float, ...] | None = None,
+        selected_candidate_index: int | None = None,
+        risk_cutoff: float | None = None,
+        selected_risk: float | None = None,
+        selected_progress_score: float | None = None,
     ) -> None:
         nonlocal sequence
         trace.append(
@@ -84,6 +108,11 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                 commanded_angular_velocity_radps=round(commanded_angular_velocity, 9),
                 range_readings_m=range_readings,
                 detail=detail,
+                candidate_risks=candidate_risks,
+                selected_candidate_index=selected_candidate_index,
+                risk_cutoff=risk_cutoff,
+                selected_risk=selected_risk,
+                selected_progress_score=selected_progress_score,
             )
         )
         sequence += 1
@@ -205,6 +234,37 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
 
         if planning_tick:
             assert latest_ranges is not None
+            if risk_model is not None and phase in ("approaching_target", "returning_to_dock"):
+                waypoint_x, waypoint_y = _waypoint_in_rover_frame(pose, route[route_index])
+                learning_state = LearningState(
+                    range_readings_m=latest_ranges,
+                    linear_velocity_mps=linear_velocity,
+                    angular_velocity_radps=angular_velocity,
+                    waypoint_x_rover_m=waypoint_x,
+                    waypoint_y_rover_m=waypoint_y,
+                    previous_linear_command_mps=commanded_linear_velocity,
+                    previous_angular_command_radps=commanded_angular_velocity,
+                )
+                risks = tuple(
+                    predict_risk(risk_model, build_feature_vector(learning_state, candidate))
+                    for candidate in CANDIDATE_COMMANDS
+                )
+                progress = tuple(
+                    candidate_progress_score(waypoint_x, waypoint_y, candidate)
+                    for candidate in CANDIDATE_COMMANDS
+                )
+                selection = select_candidate(risks, progress, risk_model.risk_cutoff)
+                desired_linear = selection.command.linear_velocity_mps
+                desired_angular = selection.command.angular_velocity_radps
+                record(
+                    "control_decision",
+                    selection.reason,
+                    candidate_risks=tuple(round(risk, 9) for risk in risks),
+                    selected_candidate_index=selection.candidate_index,
+                    risk_cutoff=risk_model.risk_cutoff,
+                    selected_risk=round(selection.risk, 9),
+                    selected_progress_score=round(selection.progress_score, 9),
+                )
             stopping_distance = linear_velocity**2 / (
                 2 * configuration.max_braking_deceleration_mps2
             )
@@ -284,10 +344,19 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         terminal_reason=terminal_reason,
         planned_routes=(outbound_route, return_route),
         terminal_failure=terminal_failure,
+        controller_kind=configuration.controller_kind,
+        model_version=risk_model.artifact_version if risk_model is not None else None,
+        model_sha256=risk_model.sha256 if risk_model is not None else None,
+        validation_evidence_reference=(
+            "artifacts/issue-8/validation-report.json" if risk_model is not None else None
+        ),
+        validation_quality_gate_status="not_met" if risk_model is not None else None,
     )
 
 
-def _unreachable_result(request: RunRequest, scenario: Scenario) -> RunResult:
+def _unreachable_result(
+    request: RunRequest, scenario: Scenario, risk_model: RiskModelArtifact | None
+) -> RunResult:
     event = TraceEvent(
         sequence=0,
         simulated_time_s=0.0,
@@ -311,6 +380,13 @@ def _unreachable_result(request: RunRequest, scenario: Scenario) -> RunResult:
             message="known-map planner found no collision-free inspection and return route",
             pose=scenario.initial_pose,
         ),
+        controller_kind=request.configuration.controller_kind,
+        model_version=risk_model.artifact_version if risk_model is not None else None,
+        model_sha256=risk_model.sha256 if risk_model is not None else None,
+        validation_evidence_reference=(
+            "artifacts/issue-8/validation-report.json" if risk_model is not None else None
+        ),
+        validation_quality_gate_status="not_met" if risk_model is not None else None,
     )
 
 
@@ -421,3 +497,40 @@ def _range_readings(
         reading = ray_distance(pose, angle, scenario, configuration.range_max_m)
         readings.append(round(reading, 9))
     return tuple(readings)
+
+
+def _load_default_risk_model() -> RiskModelArtifact:
+    path = Path(__file__).resolve().parents[2] / "artifacts" / "issue-8" / "risk-model-v1.json"
+    return load_risk_model(path)
+
+
+def _freeze_learned_configuration(request: RunRequest, artifact: RiskModelArtifact) -> RunRequest:
+    configuration = request.configuration
+    expected = {
+        "model_artifact_version": artifact.artifact_version,
+        "model_sha256": artifact.sha256,
+        "risk_cutoff": artifact.risk_cutoff,
+        "candidate_set_id": "fixed-eight-v1",
+    }
+    for field, value in expected.items():
+        supplied = getattr(configuration, field)
+        if supplied is not None and supplied != value:
+            raise ValueError(f"learned controller {field} does not match loaded artifact")
+    return replace(
+        request,
+        configuration=replace(
+            configuration,
+            model_artifact_version=artifact.artifact_version,
+            model_sha256=artifact.sha256,
+            risk_cutoff=artifact.risk_cutoff,
+            candidate_set_id="fixed-eight-v1",
+        ),
+    )
+
+
+def _waypoint_in_rover_frame(pose: Pose, waypoint: Pose) -> tuple[float, float]:
+    dx = waypoint.x_m - pose.x_m
+    dy = waypoint.y_m - pose.y_m
+    cosine = math.cos(pose.heading_rad)
+    sine = math.sin(pose.heading_rad)
+    return cosine * dx + sine * dy, -sine * dx + cosine * dy

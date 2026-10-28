@@ -234,3 +234,77 @@ def test_physical_timeout_is_single_immutable_terminal_evidence() -> None:
     assert result.trace[-1].phase == "timed_out"
     assert result.terminal_failure is not None
     assert result.terminal_failure.code == "timeout"
+
+
+def test_learned_controller_completes_and_records_replayable_decisions() -> None:
+    request = physical_run_request("preset-open-v2")
+    request = replace(
+        request,
+        configuration=replace(request.configuration, controller_kind="learned_collision_risk"),
+    )
+
+    result = run_experiment(request)
+
+    assert result.mission_outcome == "completed"
+    assert result.controller_kind == "learned_collision_risk"
+    assert result.model_version == "risk-model-v1"
+    assert result.model_sha256 is not None
+    decisions = [event for event in result.trace if event.kind == "control_decision"]
+    assert decisions
+    assert all(event.candidate_risks is not None for event in decisions)
+    assert all(len(event.candidate_risks or ()) == 8 for event in decisions)
+    assert all(event.selected_candidate_index is not None for event in decisions)
+    assert all(event.risk_cutoff is not None for event in decisions)
+    assert result.request.configuration.model_artifact_version == result.model_version
+    assert result.request.configuration.model_sha256 == result.model_sha256
+    assert result.request.configuration.risk_cutoff == decisions[0].risk_cutoff
+    assert result.request.configuration.candidate_set_id == "fixed-eight-v1"
+
+
+def test_learned_unreachable_run_preserves_controller_provenance() -> None:
+    request = physical_run_request("fixture-unreachable-v1")
+    request = replace(
+        request,
+        configuration=replace(request.configuration, controller_kind="learned_collision_risk"),
+    )
+
+    result = run_experiment(request)
+
+    assert result.mission_outcome == "unreachable"
+    assert result.controller_kind == "learned_collision_risk"
+    assert result.model_version == "risk-model-v1"
+    assert result.request.configuration.model_sha256 == result.model_sha256
+
+
+def test_learned_request_rejects_mismatched_frozen_model_identity() -> None:
+    request = physical_run_request("preset-open-v2")
+    request = replace(
+        request,
+        configuration=replace(
+            request.configuration,
+            controller_kind="learned_collision_risk",
+            model_sha256="wrong-model",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="model_sha256"):
+        run_experiment(request)
+
+
+@pytest.mark.parametrize("scenario_version", ["preset-narrow-v1", "preset-cluttered-v1"])
+def test_learned_obstacle_presets_record_conservative_timeout_evidence(
+    scenario_version: str,
+) -> None:
+    request = physical_run_request(scenario_version, expected_mission_outcome="timed_out")
+    request = replace(
+        request,
+        configuration=replace(request.configuration, controller_kind="learned_collision_risk"),
+    )
+
+    result = run_experiment(request)
+
+    assert result.mission_outcome == "timed_out"
+    assert result.test_verdict == "passed"
+    assert any(event.kind == "control_decision" for event in result.trace)
+    assert all(event.kind != "collision" for event in result.trace)
+    assert result.validation_quality_gate_status == "not_met"
