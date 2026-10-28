@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from roveredge.learning import CANDIDATE_COMMANDS, load_risk_model, select_candidate
-from roveredge.native import NativeRiskModel, naive_matmul
+from roveredge.native import NativeRiskModel, blocked_matmul, naive_matmul
 
 
 def test_naive_matmul_supports_rectangular_products() -> None:
@@ -14,6 +14,18 @@ def test_naive_matmul_supports_rectangular_products() -> None:
     right = ((7.0, 8.0), (9.0, 10.0), (11.0, 12.0))
 
     assert naive_matmul(left, right) == ((58.0, 64.0), (139.0, 154.0))
+
+
+def test_blocked_matmul_handles_rectangular_block_tails() -> None:
+    left = tuple(tuple(float(row * 7 + column) / 10 for column in range(7)) for row in range(5))
+    right = tuple(tuple(float(row - column) / 7 for column in range(3)) for row in range(7))
+
+    assert np.asarray(blocked_matmul(left, right, block_size=4)) == pytest.approx(
+        np.asarray(naive_matmul(left, right)), rel=1e-4, abs=1e-5
+    )
+
+    with pytest.raises(ValueError, match="block size"):
+        blocked_matmul(left, right, block_size=0)
 
 
 @pytest.mark.parametrize(
@@ -29,9 +41,10 @@ def test_naive_matmul_rejects_invalid_inputs(left, right, message: str) -> None:
         naive_matmul(left, right)
 
 
-def test_native_layers_logits_scores_and_commands_match_reference() -> None:
+@pytest.mark.parametrize("backend", ["native-naive", "native-blocked"])
+def test_native_layers_logits_scores_and_commands_match_reference(backend: str) -> None:
     artifact = load_risk_model(Path("artifacts/issue-8/risk-model-v1.json"))
-    runtime = NativeRiskModel(artifact)
+    runtime = NativeRiskModel(artifact, backend=backend)
     batch = tuple(
         tuple(1.0 + index * 0.01 for index in range(16))
         + (0.2, -0.1, 2.0, 0.25, candidate.linear_velocity_mps,

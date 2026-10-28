@@ -1,0 +1,57 @@
+{
+  "block_size": 16,
+  "command_disagreement_count": 0,
+  "command_disagreements": [],
+  "correctness_gate": "passed",
+  "final_test_status": "untouched",
+  "interleaving": "backend order alternates by repetition; same batch within each sample",
+  "latency": {
+    "native-blocked": {
+      "mean_us": 201.889524,
+      "median_us": 196.042,
+      "minimum_us": 189.625,
+      "p95_us": 229.916,
+      "samples": 3000
+    },
+    "native-naive": {
+      "mean_us": 215.047818,
+      "median_us": 209.792,
+      "minimum_us": 202.875,
+      "p95_us": 243.125,
+      "samples": 3000
+    }
+  },
+  "maximum_absolute_errors": {
+    "hidden_one": 0.0,
+    "hidden_two": 0.0,
+    "logits": 0.0,
+    "scores": 0.0
+  },
+  "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
+  "performance_withheld_reason": null,
+  "repetitions": 3,
+  "runtime_provenance": {
+    "backend": "native-blocked",
+    "block_size": "16",
+    "compiler": "Apple LLVM 21.0.0 (clang-2100.3.34.2)",
+    "cxx_standard": "C++20",
+    "kernel": "fresh-blocked-fp32-v1",
+    "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
+    "platform": "macOS-26.7-arm64-arm-64bit",
+    "timing_provenance": "measured_saved_input_replay"
+  },
+  "samples_per_backend_per_repetition": 1000,
+  "saved_input_artifact": "artifacts/issue-9/native-naive-inputs.json",
+  "saved_input_sha256": "007cd77405e48b5ed82d6b5c21b3ef113045a496c2e934ce436cc17bb818502e",
+  "timing_boundary": "Python call through binding, one warmed 8-candidate batch",
+  "timing_provenance": "measured_saved_input_replay",
+  "tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(naive)",
+  "tolerance_failure_counts": {
+    "hidden_one": 0,
+    "hidden_two": 0,
+    "logits": 0,
+    "scores": 0
+  },
+  "version": "native-blocked-comparison-v1",
+  "warmup_batches_per_backend": 100
+}

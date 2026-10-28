@@ -3,8 +3,8 @@
 RoverEdge is a software experimentation environment for investigating how computation delays affect simulated inspection-rover missions.
 
 The current implementation includes deterministic inspection-and-return missions, obstacle dynamics
-and failure evidence, an experimental learned collision-risk controller, and fresh naive C++20
-inference. SAM grounding remains deferred pending live provider verification, and delayed-inference
+and failure evidence, an experimental learned collision-risk controller, and fresh naive and
+cache-blocked C++20 inference. SAM grounding remains deferred pending live provider verification, and delayed-inference
 modeling is not implemented yet.
 
 ## Run locally
@@ -30,6 +30,7 @@ Build the native extension and reproduce its correctness comparison on the froze
 ```sh
 make build-native
 make compare-native-naive
+make compare-native-blocked
 ```
 
 The comparison artifact records numerical tolerance results, selected-command disagreements,
