@@ -26,6 +26,22 @@ const configuration = {
   dock: { position_tolerance_m: 0.15, heading_tolerance_rad: 0.2617993877991494 },
   timeout_s: 120,
   controller_kind: "geometric" as const,
+  execution_mode: "synchronous" as const,
+  modeled_device: {
+    dispatch_s: 0.001,
+    input_transfer_s: 0.002,
+    compute_s: 0.005,
+    output_transfer_s: 0.002,
+    pending_capacity: 2,
+    deadline_s: 0.02,
+    maximum_age_s: 0.1,
+    queue_policy: "fifo" as const,
+    requests_per_tick: 1,
+    resident_weights_bytes: 14852,
+    workspace_bytes: 4096,
+    request_payload_bytes: 1024,
+    memory_budget_bytes: 32768,
+  },
 };
 
 const scenario: Scenario = {
@@ -360,6 +376,60 @@ describe("mission replay application", () => {
     );
     expect(root.querySelector("[data-field='runtime']")?.textContent).toContain(
       "native-naive · disagreements 0 · not_measured",
+    );
+  });
+
+  test("labels modeled memory separately and shows rejection recovery evidence", async () => {
+    const modeledResult: RunResult = {
+      ...result,
+      inference_summary: {
+        timing_provenance: "modeled",
+        resident_weights_bytes: 14852,
+        workspace_bytes: 4096,
+        pending_payload_bytes: 0,
+        in_flight_payload_bytes: 0,
+        current_modeled_memory_bytes: 18948,
+        peak_modeled_memory_bytes: 19972,
+        memory_budget_bytes: 19972,
+        memory_rejections: 2,
+      },
+    };
+    const run = vi.fn(async () => modeledResult);
+    const api: RoverEdgeApi = {
+      getScenarios: async () => [scenario],
+      run,
+    };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.input(root.querySelector<HTMLInputElement>("[data-action='memory-budget']")!, {
+      target: { value: "19972" },
+    });
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='modeled-memory']")!);
+
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(run).toHaveBeenCalledWith({
+      ...scenario.default_run_request,
+      configuration: {
+        ...scenario.default_run_request.configuration,
+        controller_kind: "learned_collision_risk",
+        execution_mode: "virtual_fifo",
+        modeled_device: {
+          ...scenario.default_run_request.configuration.modeled_device,
+          memory_budget_bytes: 19972,
+        },
+      },
+    });
+    expect(root.querySelector("[data-field='modeled-memory']")?.textContent).toContain(
+      "modeled allocation · resident weights 14852 B",
+    );
+    expect(root.querySelector("[data-field='modeled-memory']")?.textContent).toContain(
+      "rejections 2 · recovered request payloads",
+    );
+    expect(root.querySelector("[data-field='modeled-memory']")?.textContent).not.toContain(
+      "RSS",
     );
   });
 

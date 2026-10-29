@@ -29,9 +29,15 @@ def test_fifo_device_freezes_completion_consumption_and_boundary_semantics() -> 
         )
     )
 
-    assert [event.kind for event in device.submit(request(1), 0.0)] == ["dispatched"]
+    assert [event.kind for event in device.submit(request(1), 0.0)] == [
+        "memory_allocated",
+        "dispatched",
+    ]
     assert device.advance(0.049) == ()
-    assert [event.kind for event in device.advance(0.05)] == ["completed"]
+    assert [event.kind for event in device.advance(0.05)] == [
+        "completed",
+        "memory_released",
+    ]
     completed, events = device.consume_latest(0.1)
 
     assert completed is not None
@@ -52,13 +58,24 @@ def test_fifo_device_records_overflow_and_expiry(policy: QueuePolicy) -> None:
     )
 
     device.submit(request(1), 0.0)
-    assert [event.kind for event in device.submit(request(2, 0.01), 0.01)] == ["admitted"]
-    assert [event.kind for event in device.submit(request(3, 0.02), 0.02)] == [
-        "overflow" if policy == "fifo" else "replaced"
+    assert [event.kind for event in device.submit(request(2, 0.01), 0.01)] == [
+        "memory_allocated",
+        "admitted",
     ]
-    assert [event.kind for event in device.advance(0.21)] == ["completed", "deadline_missed"]
+    assert [event.kind for event in device.submit(request(3, 0.02), 0.02)] == (
+        ["overflow"]
+        if policy == "fifo"
+        else ["memory_released", "memory_allocated", "replaced"]
+    )
+    assert [event.kind for event in device.advance(0.21)] == [
+        "completed",
+        "memory_released",
+        "deadline_missed",
+    ]
     assert [event.kind for event in device.submit(request(4, 0.21), 0.21)] == [
+        "memory_allocated",
         "expired",
+        "memory_released",
         "dispatched",
     ]
 
@@ -78,13 +95,16 @@ def test_fifo_device_defers_dispatch_and_accepts_exact_deadline(policy: QueuePol
     device.submit(request(1), 0.0)
     device.submit(request(2, 0.01), 0.01)
 
-    assert [event.kind for event in device.advance(0.05)] == ["completed"]
+    assert [event.kind for event in device.advance(0.05)] == [
+        "completed",
+        "memory_released",
+    ]
     _, consumed = device.consume_latest(0.05)
     dispatched = device.submit(request(3, 0.05), 0.05)
 
     assert [event.kind for event in consumed] == ["consumed"]
-    assert [event.kind for event in dispatched] == ["dispatched"]
-    assert dispatched[0].request_id == 2
+    assert [event.kind for event in dispatched] == ["memory_allocated", "dispatched"]
+    assert dispatched[1].request_id == 2
 
 
 def test_fifo_device_marks_only_completion_beyond_deadline() -> None:
@@ -95,6 +115,7 @@ def test_fifo_device_marks_only_completion_beyond_deadline() -> None:
 
     assert [event.kind for event in device.advance(0.025002)] == [
         "completed",
+        "memory_released",
         "deadline_missed",
     ]
 
@@ -121,10 +142,17 @@ def test_latest_pending_replaces_waiting_work_without_canceling_execution() -> N
 
     replacement = device.submit(request(3, 0.02), 0.02)
 
-    assert [event.kind for event in replacement] == ["replaced"]
-    assert replacement[0].request_id == 2
-    assert [event.request_id for event in device.advance(0.206)] == [1, 1]
-    assert [event.request_id for event in device.submit(request(4, 0.206), 0.206)] == [3]
+    assert [event.kind for event in replacement] == [
+        "memory_released",
+        "memory_allocated",
+        "replaced",
+    ]
+    assert replacement[-1].request_id == 2
+    assert [event.request_id for event in device.advance(0.206)] == [1, 1, 1]
+    assert [event.request_id for event in device.submit(request(4, 0.206), 0.206)] == [
+        4,
+        3,
+    ]
 
 
 def test_burst_fixture_exposes_fifo_overflow_and_latest_replacement() -> None:
@@ -139,4 +167,95 @@ def test_burst_fixture_exposes_fifo_overflow_and_latest_replacement() -> None:
         device.submit(request(2), 0.0)
 
     assert [event.kind for event in fifo.submit(request(3), 0.0)] == ["overflow"]
-    assert [event.kind for event in latest.submit(request(3), 0.0)] == ["replaced"]
+    assert fifo.memory_summary["pending_payload_bytes"] == 1_024
+    assert fifo.memory_summary["in_flight_payload_bytes"] == 1_024
+    assert [event.kind for event in latest.submit(request(3), 0.0)] == [
+        "memory_released",
+        "memory_allocated",
+        "replaced",
+    ]
+
+
+def test_modeled_memory_accepts_exact_boundary_and_rejects_one_byte_less() -> None:
+    exact = FifoDevice[str](
+        ModeledDeviceProfile(
+            resident_weights_bytes=100,
+            workspace_bytes=20,
+            request_payload_bytes=10,
+            memory_budget_bytes=130,
+        )
+    )
+    constrained = FifoDevice[str](
+        ModeledDeviceProfile(
+            resident_weights_bytes=100,
+            workspace_bytes=20,
+            request_payload_bytes=10,
+            memory_budget_bytes=129,
+        )
+    )
+
+    exact_events = exact.submit(request(1), 0.0)
+    constrained_events = constrained.submit(request(1), 0.0)
+
+    assert [event.kind for event in exact_events] == ["memory_allocated", "dispatched"]
+    assert exact_events[0].modeled_memory_bytes == 130
+    assert exact_events[0].memory_budget_bytes == 130
+    assert [event.kind for event in constrained_events] == ["memory_rejected"]
+    assert constrained_events[0].modeled_memory_bytes == 120
+    assert constrained_events[0].memory_budget_bytes == 129
+
+
+def test_modeled_memory_releases_payloads_after_completion_replacement_and_expiry() -> None:
+    profile = ModeledDeviceProfile(
+        compute_s=0.2,
+        pending_capacity=2,
+        maximum_age_s=0.1,
+        queue_policy="latest_pending",
+        resident_weights_bytes=100,
+        workspace_bytes=20,
+        request_payload_bytes=10,
+        memory_budget_bytes=140,
+    )
+    device = FifoDevice[str](profile)
+
+    device.submit(request(1), 0.0)
+    device.submit(request(2, 0.01), 0.01)
+    replacement = device.submit(request(3, 0.02), 0.02)
+    completion = device.advance(0.21)
+    dispatch_after_expiry = device.submit(request(4, 0.21), 0.21)
+
+    assert [event.kind for event in replacement] == [
+        "memory_released",
+        "memory_allocated",
+        "replaced",
+    ]
+    assert [event.kind for event in completion] == [
+        "completed",
+        "memory_released",
+        "deadline_missed",
+    ]
+    assert [event.kind for event in dispatch_after_expiry] == [
+        "memory_allocated",
+        "expired",
+        "memory_released",
+        "dispatched",
+    ]
+    assert device.memory_summary == {
+        "resident_weights_bytes": 100,
+        "workspace_bytes": 20,
+        "pending_payload_bytes": 0,
+        "in_flight_payload_bytes": 10,
+        "current_modeled_memory_bytes": 130,
+        "peak_modeled_memory_bytes": 140,
+        "memory_budget_bytes": 140,
+        "memory_rejections": 0,
+    }
+
+    terminal_release = device.release_all(0.22)
+
+    assert [event.kind for event in terminal_release] == [
+        "dropped",
+        "memory_released",
+    ]
+    assert device.memory_summary["current_modeled_memory_bytes"] == 120
+    assert device.memory_summary["in_flight_payload_bytes"] == 0

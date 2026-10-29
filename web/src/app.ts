@@ -75,6 +75,10 @@ export interface RunRequest {
       maximum_age_s: number;
       queue_policy: "fifo" | "latest_pending";
       requests_per_tick: number;
+      resident_weights_bytes: number;
+      workspace_bytes: number;
+      request_payload_bytes: number;
+      memory_budget_bytes: number;
     };
   };
   expected_mission_outcome: "completed" | "timed_out" | "collision" | "unreachable";
@@ -112,6 +116,13 @@ interface TraceEvent extends ReplayEvent {
   modeled_event_time_s?: number | null;
   timing_provenance?: "modeled" | "measured" | null;
   queue_wait_s?: number | null;
+  modeled_memory_bytes?: number | null;
+  memory_budget_bytes?: number | null;
+  resident_weights_bytes?: number | null;
+  workspace_bytes?: number | null;
+  pending_payload_bytes?: number | null;
+  in_flight_payload_bytes?: number | null;
+  peak_modeled_memory_bytes?: number | null;
 }
 
 export interface RunResult {
@@ -142,6 +153,7 @@ export interface RunResult {
     | null;
   runtime_provenance?: Record<string, string> | null;
   command_disagreements?: number | null;
+  inference_summary?: Record<string, number | string> | null;
   terminal_failure?: {
     code: "collision" | "unreachable" | "timeout";
     message: string;
@@ -187,12 +199,18 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   const scenarios = await api.getScenarios();
   let scenario = scenarios[0]!;
   const selector = root.querySelector<HTMLSelectElement>("[data-action='scenario']")!;
+  const memoryBudget = root.querySelector<HTMLInputElement>(
+    "[data-action='memory-budget']",
+  )!;
   for (const available of scenarios) {
     selector.add(new Option(available.name, available.scenario_version));
   }
   const showScenario = (): void => {
     setText(root, "scenario", `${scenario.name} · ${scenario.scenario_version}`);
     setText(root, "target", scenario.target.label);
+    memoryBudget.value = String(
+      scenario.default_run_request.configuration.modeled_device?.memory_budget_bytes ?? 32768,
+    );
   };
   showScenario();
   if (api.getAccelerateComparison) {
@@ -335,6 +353,7 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
       "runtime",
       formatRuntimeEvidence(result),
     );
+    setText(root, "modeled-memory", formatModeledMemory(result));
     setText(
       root,
       "phases",
@@ -423,6 +442,25 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
         }),
       ),
     );
+  root
+    .querySelector("[data-action='modeled-memory']")!
+    .addEventListener("click", () => {
+      const modeledDevice = scenario.default_run_request.configuration.modeled_device!;
+      void run(() =>
+        api.run({
+          ...scenario.default_run_request,
+          configuration: {
+            ...scenario.default_run_request.configuration,
+            controller_kind: "learned_collision_risk",
+            execution_mode: "virtual_fifo",
+            modeled_device: {
+              ...modeledDevice,
+              memory_budget_bytes: Number(memoryBudget.value),
+            },
+          },
+        }),
+      );
+    });
   selector.addEventListener("change", () => {
     scenario = scenarios.find((item) => item.scenario_version === selector.value)!;
     showScenario();
@@ -538,6 +576,27 @@ function formatRuntimeEvidence(result: RunResult): string {
   return parts.join(" · ");
 }
 
+function formatModeledMemory(result: RunResult): string {
+  const summary = result.inference_summary;
+  if (!summary || summary.timing_provenance !== "modeled") return "Not applicable";
+  const recovered =
+    summary.pending_payload_bytes === 0 && summary.in_flight_payload_bytes === 0
+      ? "recovered request payloads"
+      : "request payloads still allocated";
+  return [
+    "modeled allocation",
+    `resident weights ${summary.resident_weights_bytes} B`,
+    `reusable workspace ${summary.workspace_bytes} B`,
+    `pending payloads ${summary.pending_payload_bytes} B`,
+    `in-flight payloads ${summary.in_flight_payload_bytes} B`,
+    `current ${summary.current_modeled_memory_bytes} B`,
+    `peak ${summary.peak_modeled_memory_bytes} B`,
+    `budget ${summary.memory_budget_bytes} B`,
+    `rejections ${summary.memory_rejections}`,
+    recovered,
+  ].join(" · ");
+}
+
 function drawScene(
   canvas: HTMLCanvasElement,
   scenario: Scenario,
@@ -646,6 +705,12 @@ function applicationMarkup(): string {
         <button data-action="accelerate">Run Apple Accelerate</button>
         <button data-action="timeout" class="secondary">Run expected timeout</button>
       </div>
+        <div class="actions">
+          <label>Modeled allocation budget (bytes)
+            <input data-action="memory-budget" aria-label="Modeled allocation budget bytes" type="number" min="0" step="1">
+          </label>
+          <button data-action="modeled-memory">Run modeled memory experiment</button>
+        </div>
     </section>
     <section class="mission-grid">
       <div class="stage"><canvas width="800" height="600" aria-label="Recorded mission replay"></canvas></div>
@@ -661,6 +726,7 @@ function applicationMarkup(): string {
           <dt>Risk model</dt><dd data-field="model">Not used</dd>
           <dt>Validation evidence</dt><dd data-field="validation">Not applicable</dd>
           <dt>Inference runtime</dt><dd data-field="runtime">Not applicable</dd>
+          <dt>Modeled memory</dt><dd data-field="modeled-memory">Not applicable</dd>
           <dt>Accelerate comparison</dt><dd data-field="accelerate-comparison">Recorded evidence unavailable</dd>
           <dt>Phase</dt><dd data-field="phase">Not started</dd>
           <dt>Simulated time</dt><dd data-field="time">0.00 s</dd>

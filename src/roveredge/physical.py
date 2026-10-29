@@ -119,6 +119,8 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         "consumed": 0,
         "deadline_misses": 0,
         "replaced": 0,
+        "dropped": 0,
+        "memory_rejected": 0,
     }
     observation_id = 0
     accepted_selection: CandidateSelection | None = None
@@ -143,6 +145,13 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         event_candidate_set_id: str | None = None,
         event_model_sha256: str | None = None,
         queue_wait_s: float | None = None,
+        modeled_memory_bytes: int | None = None,
+        memory_budget_bytes: int | None = None,
+        resident_weights_bytes: int | None = None,
+        workspace_bytes: int | None = None,
+        pending_payload_bytes: int | None = None,
+        in_flight_payload_bytes: int | None = None,
+        peak_modeled_memory_bytes: int | None = None,
     ) -> None:
         nonlocal sequence
         trace.append(
@@ -178,6 +187,13 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                 event_candidate_set_id=event_candidate_set_id,
                 event_model_sha256=event_model_sha256,
                 queue_wait_s=queue_wait_s,
+                modeled_memory_bytes=modeled_memory_bytes,
+                memory_budget_bytes=memory_budget_bytes,
+                resident_weights_bytes=resident_weights_bytes,
+                workspace_bytes=workspace_bytes,
+                pending_payload_bytes=pending_payload_bytes,
+                in_flight_payload_bytes=in_flight_payload_bytes,
+                peak_modeled_memory_bytes=peak_modeled_memory_bytes,
             )
         )
         sequence += 1
@@ -204,6 +220,13 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                     if event.queue_wait_s is not None
                     else None
                 ),
+                modeled_memory_bytes=event.modeled_memory_bytes,
+                memory_budget_bytes=event.memory_budget_bytes,
+                resident_weights_bytes=event.resident_weights_bytes,
+                workspace_bytes=event.workspace_bytes,
+                pending_payload_bytes=event.pending_payload_bytes,
+                in_flight_payload_bytes=event.in_flight_payload_bytes,
+                peak_modeled_memory_bytes=event.peak_modeled_memory_bytes,
             )
 
     def transition(next_phase: MissionPhase) -> None:
@@ -524,6 +547,8 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         simulated_time = round(simulated_time + configuration.physics_step_s, 9)
         record("pose_sample")
 
+    if virtual_device is not None:
+        record_device_events(virtual_device.release_all(simulated_time))
     verdict: TestVerdict = "passed" if outcome == request.expected_mission_outcome else "failed"
     return RunResult(
         run_id=str(uuid.uuid4()),
@@ -557,12 +582,16 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
             {
                 **inference_counts,
                 "admitted_total": inference_counts["scheduled"]
-                - inference_counts["overflow"],
+                - inference_counts["overflow"]
+                - inference_counts["memory_rejected"],
                 "dropped_total": inference_counts["overflow"]
                 + inference_counts["replaced"]
-                + inference_counts["expired"],
+                + inference_counts["expired"]
+                + inference_counts["dropped"]
+                + inference_counts["memory_rejected"],
                 "execution_mode": "virtual_fifo",
                 "timing_provenance": "modeled",
+                **virtual_device.memory_summary,
             }
             if virtual_device is not None
             else None

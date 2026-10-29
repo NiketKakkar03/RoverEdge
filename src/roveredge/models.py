@@ -179,6 +179,13 @@ class TraceEvent:
     event_candidate_set_id: str | None = None
     event_model_sha256: str | None = None
     queue_wait_s: float | None = None
+    modeled_memory_bytes: int | None = None
+    memory_budget_bytes: int | None = None
+    resident_weights_bytes: int | None = None
+    workspace_bytes: int | None = None
+    pending_payload_bytes: int | None = None
+    in_flight_payload_bytes: int | None = None
+    peak_modeled_memory_bytes: int | None = None
 
 
 @dataclass(frozen=True)
