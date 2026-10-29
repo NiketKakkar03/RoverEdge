@@ -274,6 +274,98 @@ describe("mission replay application", () => {
     );
   });
 
+  test("edits a preset, confirms geometry, and selects the immutable saved version", async () => {
+    const saved: Scenario = {
+      ...scenario,
+      scenario_version: "scene-0123456789abcdef",
+      name: "Edited inspection room",
+      pixels_per_meter: 120,
+      source_version: scenario.scenario_version,
+      target: { ...scenario.target, label: "Blue barrel" },
+      default_run_request: {
+        ...scenario.default_run_request,
+        scenario_version: "scene-0123456789abcdef",
+      },
+    };
+    const getSceneDraft = vi.fn(async () => ({
+      name: scenario.name,
+      width_m: 8,
+      height_m: 6,
+      pixels_per_meter: 100,
+      dock_pose: scenario.dock_pose,
+      obstacles: scenario.obstacles,
+      targets: [
+        {
+          object_id: "red-toolbox",
+          label: "Red toolbox" as const,
+          x_min_m: 5.8,
+          y_min_m: 2.2,
+          x_max_m: 7.2,
+          y_max_m: 3.8,
+          color_rgb: [196, 54, 45] as [number, number, number],
+        },
+        {
+          object_id: "blue-barrel",
+          label: "Blue barrel" as const,
+          x_min_m: 3.8,
+          y_min_m: 4,
+          x_max_m: 5.2,
+          y_max_m: 5.6,
+          color_rgb: [42, 92, 168] as [number, number, number],
+        },
+      ],
+      source_version: scenario.scenario_version,
+    }));
+    const saveSceneVersion = vi.fn(async (_draft: import("./app").SceneDraft) => saved);
+    const api: RoverEdgeApi = {
+      getScenarios: async () => [scenario],
+      getSceneDraft,
+      saveSceneVersion,
+      run: async () => result,
+    };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector("[data-scene-action='preset']")!);
+    await waitFor(() => expect(getSceneDraft).toHaveBeenCalledWith(scenario.scenario_version));
+    fireEvent.input(root.querySelector("[data-editor='name']")!, {
+      target: { value: "Edited inspection room" },
+    });
+    fireEvent.input(root.querySelector("[data-editor='scale']")!, {
+      target: { value: "120" },
+    });
+    expect(root.querySelector<HTMLCanvasElement>("[data-field='scene-preview']")?.width).toBe(
+      960,
+    );
+    fireEvent.input(root.querySelector("[data-editor='obstacle']")!, {
+      target: { value: "2,0.5,2.5,1.5" },
+    });
+    fireEvent.click(root.querySelector("[data-scene-action='save']")!);
+
+    await waitFor(() => expect(saveSceneVersion).toHaveBeenCalled());
+    expect(root.querySelector("[data-field='scene-validation']")?.textContent).toContain(
+      "scene-0123456789abcdef",
+    );
+    expect(root.querySelector("[data-field='scene-validation']")?.textContent).toContain(
+      '--phrase "blue barrel"',
+    );
+    expect(root.querySelector<HTMLSelectElement>("[data-action='scenario']")?.value).toBe(
+      "scene-0123456789abcdef",
+    );
+    expect(saveSceneVersion.mock.calls[0]![0]).toMatchObject({
+      name: "Edited inspection room",
+      pixels_per_meter: 120,
+      source_version: scenario.scenario_version,
+      obstacles: [{ obstacle_id: "edited-obstacle-1" }],
+      targets: [
+        { label: "Red toolbox", color_rgb: [196, 54, 45] },
+        { label: "Blue barrel", color_rgb: [42, 92, 168] },
+      ],
+    });
+  });
+
   test("submits a recorded visual target and displays grounding provenance", async () => {
     const groundedResult: RunResult = {
       ...result,

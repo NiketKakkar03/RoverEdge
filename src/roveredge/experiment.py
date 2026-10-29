@@ -51,7 +51,9 @@ def run_experiment(
 ) -> RunResult:
     if isinstance(request.target, VisualTarget):
         return _run_grounded_experiment(request, request.target, grounding_adapter)
-    if request.scenario_version in {
+    from .scenarios import is_saved_scenario_version
+
+    if is_saved_scenario_version(request.scenario_version) or request.scenario_version in {
         "preset-open-v2",
         "preset-perception-v1",
         "fixture-perception-shifted-v1",

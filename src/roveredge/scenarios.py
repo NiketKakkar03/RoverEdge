@@ -1,4 +1,8 @@
-from dataclasses import dataclass
+import hashlib
+import json
+import math
+from dataclasses import asdict, dataclass
+from pathlib import Path
 
 from .models import KnownTargetFixture, MissionOutcome, Pose, RunConfiguration, RunRequest
 
@@ -35,6 +39,8 @@ class Scenario:
     inspection_pose: Pose
     obstacles: tuple[Obstacle, ...]
     visual_objects: tuple[VisualObject, ...] = ()
+    pixels_per_meter: float = 100.0
+    source_version: str | None = None
 
 
 def _scenario(
@@ -161,10 +167,199 @@ SCENARIOS = {
     ),
 }
 
+SAVED_SCENARIOS: dict[str, Scenario] = {}
+SCENE_STORE = Path(__file__).resolve().parents[2] / ".roveredge" / "scenarios"
+
+
+@dataclass(frozen=True)
+class SceneDraft:
+    name: str
+    width_m: float
+    height_m: float
+    pixels_per_meter: float
+    dock_pose: Pose
+    obstacles: tuple[Obstacle, ...]
+    targets: tuple[VisualObject, ...]
+    source_version: str | None = None
+
+
+def scene_draft(scenario: Scenario) -> SceneDraft:
+    return SceneDraft(
+        name=scenario.name,
+        width_m=scenario.width_m,
+        height_m=scenario.height_m,
+        pixels_per_meter=scenario.pixels_per_meter,
+        dock_pose=scenario.dock_pose,
+        obstacles=scenario.obstacles,
+        targets=scenario.visual_objects,
+        source_version=scenario.scenario_version,
+    )
+
+
+def validate_scene_draft(draft: SceneDraft) -> tuple[str, ...]:
+    errors: list[str] = []
+    finite_scalars = (draft.width_m, draft.height_m, draft.pixels_per_meter)
+    if not all(math.isfinite(value) for value in finite_scalars):
+        errors.append("map width, height, and scale must be finite")
+    elif draft.width_m <= 0 or draft.height_m <= 0:
+        errors.append("map width and height must be positive")
+    elif draft.pixels_per_meter < 20 or draft.pixels_per_meter > 400:
+        errors.append("scale must be between 20 and 400 pixels per meter")
+    if not draft.name.strip():
+        errors.append("scene name is required")
+    if not draft.targets:
+        errors.append("add at least one target before confirming the scene")
+
+    def validate_pose() -> None:
+        values = (draft.dock_pose.x_m, draft.dock_pose.y_m, draft.dock_pose.heading_rad)
+        if not all(math.isfinite(value) for value in values):
+            errors.append("dock pose coordinates and heading must be finite")
+        elif not (0 <= draft.dock_pose.x_m <= draft.width_m) or not (
+            0 <= draft.dock_pose.y_m <= draft.height_m
+        ):
+            errors.append("dock pose must be inside the map bounds")
+
+    validate_pose()
+    rectangles = [
+        ("obstacle", item.obstacle_id, item.x_min_m, item.y_min_m, item.x_max_m, item.y_max_m)
+        for item in draft.obstacles
+    ] + [
+        ("target", item.object_id, item.x_min_m, item.y_min_m, item.x_max_m, item.y_max_m)
+        for item in draft.targets
+    ]
+    seen_ids: set[str] = set()
+    for kind, identity, x_min, y_min, x_max, y_max in rectangles:
+        if not identity.strip():
+            errors.append(f"{kind} id is required")
+        elif identity in seen_ids:
+            errors.append(f"duplicate geometry id: {identity}")
+        seen_ids.add(identity)
+        if not all(math.isfinite(value) for value in (x_min, y_min, x_max, y_max)):
+            errors.append(f"{kind} {identity} coordinates must be finite")
+        elif x_min >= x_max or y_min >= y_max:
+            errors.append(f"{kind} {identity} must have positive width and height")
+        elif x_min < 0 or y_min < 0 or x_max > draft.width_m or y_max > draft.height_m:
+            errors.append(f"{kind} {identity} must be inside the map bounds")
+    for target in draft.targets:
+        if target.label not in {"Red toolbox", "Blue barrel"}:
+            errors.append(
+                f"target {target.object_id} label must be Red toolbox or Blue barrel"
+            )
+    for obstacle in draft.obstacles:
+        if (
+            obstacle.x_min_m <= draft.dock_pose.x_m <= obstacle.x_max_m
+            and obstacle.y_min_m <= draft.dock_pose.y_m <= obstacle.y_max_m
+        ):
+            errors.append(f"dock pose overlaps obstacle {obstacle.obstacle_id}")
+        for target in draft.targets:
+            if (
+                obstacle.x_min_m < target.x_max_m
+                and obstacle.x_max_m > target.x_min_m
+                and obstacle.y_min_m < target.y_max_m
+                and obstacle.y_max_m > target.y_min_m
+            ):
+                errors.append(
+                    f"target {target.object_id} overlaps obstacle {obstacle.obstacle_id}"
+                )
+    if not errors and draft.targets:
+        from .planning import plan_route
+
+        for target_index, target in enumerate(draft.targets):
+            candidate = _scenario_from_draft(
+                draft, "validation-draft", target_index=target_index
+            )
+            route = plan_route(
+                candidate,
+                candidate.dock_pose,
+                candidate.inspection_pose,
+                resolution_m=0.1,
+                inflation_m=0.25,
+            )
+            if route is None:
+                errors.append(
+                    "dock cannot reach a collision-free inspection standoff for target "
+                    f"{target.object_id}"
+                )
+    return tuple(errors)
+
+
+def save_scene_version(draft: SceneDraft) -> Scenario:
+    errors = validate_scene_draft(draft)
+    if errors:
+        raise ValueError("invalid scene geometry: " + "; ".join(errors))
+    canonical = json.dumps(asdict(draft), sort_keys=True, separators=(",", ":"))
+    scenario_version = "scene-" + hashlib.sha256(canonical.encode()).hexdigest()[:16]
+    scenario = _scenario_from_draft(draft, scenario_version)
+    SAVED_SCENARIOS.setdefault(scenario_version, scenario)
+    SCENE_STORE.mkdir(parents=True, exist_ok=True)
+    destination = SCENE_STORE / f"{scenario_version}.json"
+    if not destination.exists():
+        temporary = destination.with_suffix(".tmp")
+        temporary.write_text(json.dumps(asdict(scenario), indent=2) + "\n")
+        temporary.replace(destination)
+    return SAVED_SCENARIOS[scenario_version]
+
+
+def _scenario_from_draft(
+    draft: SceneDraft, scenario_version: str, *, target_index: int = 0
+) -> Scenario:
+    target = draft.targets[target_index]
+    return Scenario(
+        scenario_version=scenario_version,
+        name=draft.name.strip(),
+        width_m=draft.width_m,
+        height_m=draft.height_m,
+        initial_pose=draft.dock_pose,
+        initial_linear_velocity_mps=0.0,
+        dock_pose=draft.dock_pose,
+        inspection_pose=Pose(
+            max(0.25, target.x_min_m - 0.5),
+            (target.y_min_m + target.y_max_m) / 2,
+            0.0,
+        ),
+        obstacles=tuple(draft.obstacles),
+        visual_objects=tuple(draft.targets),
+        pixels_per_meter=draft.pixels_per_meter,
+        source_version=draft.source_version,
+    )
+
+
+def reload_saved_scenarios() -> None:
+    SAVED_SCENARIOS.clear()
+    if not SCENE_STORE.is_dir():
+        return
+    for path in sorted(SCENE_STORE.glob("scene-*.json")):
+        document = json.loads(path.read_text())
+        scenario = Scenario(
+            scenario_version=document["scenario_version"],
+            name=document["name"],
+            width_m=document["width_m"],
+            height_m=document["height_m"],
+            initial_pose=Pose(**document["initial_pose"]),
+            initial_linear_velocity_mps=document["initial_linear_velocity_mps"],
+            dock_pose=Pose(**document["dock_pose"]),
+            inspection_pose=Pose(**document["inspection_pose"]),
+            obstacles=tuple(Obstacle(**item) for item in document["obstacles"]),
+            visual_objects=tuple(
+                VisualObject(**{**item, "color_rgb": tuple(item["color_rgb"])})
+                for item in document["visual_objects"]
+            ),
+            pixels_per_meter=document["pixels_per_meter"],
+            source_version=document.get("source_version"),
+        )
+        SAVED_SCENARIOS[scenario.scenario_version] = scenario
+
+
+def is_saved_scenario_version(scenario_version: str) -> bool:
+    return scenario_version in SAVED_SCENARIOS
+
+
+reload_saved_scenarios()
+
 
 def get_scenario(scenario_version: str) -> Scenario:
     try:
-        return SCENARIOS[scenario_version]
+        return SCENARIOS.get(scenario_version) or SAVED_SCENARIOS[scenario_version]
     except KeyError as error:
         raise ValueError(f"unsupported scenario version: {scenario_version}") from error
 

@@ -39,7 +39,7 @@ from .models import (
 from .native import NativeRiskModel, runtime_provenance
 from .native_paced import NativePacedEvent, NativePacedExecutor
 from .planning import plan_route
-from .scenarios import Scenario, get_scenario, physical_run_request
+from .scenarios import Scenario, get_scenario, is_saved_scenario_version, physical_run_request
 
 
 def physical_open_run_request() -> RunRequest:
@@ -55,7 +55,11 @@ def run_physical_experiment(
     if not isinstance(request.target, KnownTargetFixture):
         raise ValueError("visual target must be grounded before physical execution")
     target_id = request.target.target_id
-    if scenario_override is None and target_id != "preset-storage-container":
+    if (
+        scenario_override is None
+        and not is_saved_scenario_version(request.scenario_version)
+        and target_id != "preset-storage-container"
+    ):
         raise ValueError(f"unsupported target: {target_id}")
 
     configuration = request.configuration
