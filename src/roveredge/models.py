@@ -18,9 +18,10 @@ EventKind = Literal[
     "collision",
     "control_decision",
     "inference_event",
+    "pacing_overrun",
 ]
 ControllerKind = Literal["geometric", "learned_collision_risk"]
-ExecutionMode = Literal["synchronous", "virtual_fifo"]
+ExecutionMode = Literal["synchronous", "virtual_fifo", "native_paced"]
 InferenceBackend = Literal[
     "python-reference",
     "native-naive",
@@ -119,6 +120,7 @@ class RunConfiguration:
     risk_cutoff: float | None = None
     candidate_set_id: str | None = None
     execution_mode: ExecutionMode = "synchronous"
+    pacing_overrun_limit_s: float = 0.02
     modeled_device: ModeledDeviceProfile = ModeledDeviceProfile()
 
     def __post_init__(self) -> None:
@@ -134,6 +136,7 @@ class RunConfiguration:
             self.route_grid_resolution_m,
             self.planning_clearance_m,
             self.timeout_s,
+            self.pacing_overrun_limit_s,
         )
         if not all(math.isfinite(value) for value in scalar_values):
             raise ValueError("run configuration values must be finite")
@@ -153,6 +156,8 @@ class RunConfiguration:
             raise ValueError("route grid resolution must be positive and clearance nonnegative")
         if self.timeout_s <= 0:
             raise ValueError("mission timeout must be positive")
+        if self.pacing_overrun_limit_s < 0:
+            raise ValueError("pacing overrun limit cannot be negative")
         if self.inference_workers <= 0:
             raise ValueError("inference workers must be positive")
         if (
@@ -164,6 +169,10 @@ class RunConfiguration:
             raise ValueError("only parallel blocked inference supports multiple workers")
         if self.execution_mode == "virtual_fifo" and self.inference_backend != "python-reference":
             raise ValueError("virtual modeled execution requires python-reference inference")
+        if self.execution_mode == "native_paced" and not self.inference_backend.startswith(
+            "native-"
+        ):
+            raise ValueError("native paced execution requires a native inference backend")
         if self.controller_kind == "learned_collision_risk" and self.range_ray_count != 16:
             raise ValueError("learned collision risk requires the fixed 16-ray feature structure")
 
@@ -213,6 +222,8 @@ class TraceEvent:
     pending_payload_bytes: int | None = None
     in_flight_payload_bytes: int | None = None
     peak_modeled_memory_bytes: int | None = None
+    measured_execution_s: float | None = None
+    pacing_overrun_s: float | None = None
 
 
 @dataclass(frozen=True)

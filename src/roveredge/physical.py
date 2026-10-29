@@ -1,9 +1,11 @@
 import hashlib
 import json
 import math
+import time
 import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
+from typing import Literal
 
 from .configuration import assess_configuration
 from .device import DeviceEvent, FifoDevice, InferenceRequest
@@ -34,6 +36,7 @@ from .models import (
     TraceEvent,
 )
 from .native import NativeRiskModel, runtime_provenance
+from .native_paced import NativePacedEvent, NativePacedExecutor
 from .planning import plan_route
 from .scenarios import Scenario, get_scenario, physical_run_request
 
@@ -66,7 +69,18 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         )
         if risk_model is not None
         and configuration.inference_backend.startswith("native-")
-        and configuration.execution_mode == "synchronous"
+        and configuration.execution_mode in ("synchronous", "native_paced")
+        else None
+    )
+    native_paced = (
+        NativePacedExecutor[
+            tuple[
+                tuple[tuple[float, ...], ...],
+                tuple[float, ...],
+                tuple[float, ...],
+            ]
+        ](lambda payload: native_model.evaluate(payload[0]).scores)
+        if native_model is not None and configuration.execution_mode == "native_paced"
         else None
     )
     virtual_device = (
@@ -126,6 +140,8 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
     observation_id = 0
     accepted_selection: CandidateSelection | None = None
     accepted_observed_at_s: float | None = None
+    accepted_request_id: int | None = None
+    accepted_observation_id: int | None = None
 
     def record(
         kind: EventKind,
@@ -153,6 +169,9 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         pending_payload_bytes: int | None = None,
         in_flight_payload_bytes: int | None = None,
         peak_modeled_memory_bytes: int | None = None,
+        timing_provenance: Literal["modeled", "measured"] | None = None,
+        measured_execution_s: float | None = None,
+        pacing_overrun_s: float | None = None,
     ) -> None:
         nonlocal sequence
         trace.append(
@@ -180,9 +199,14 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                 observation_age_s=observation_age_s,
                 modeled_event_time_s=modeled_event_time_s,
                 timing_provenance=(
-                    "modeled"
-                    if inference_event_kind is not None or observation_age_s is not None
-                    else None
+                    timing_provenance
+                    if timing_provenance is not None
+                    else (
+                        "modeled"
+                        if virtual_device is not None
+                        and (inference_event_kind is not None or observation_age_s is not None)
+                        else None
+                    )
                 ),
                 episode_id=episode_id,
                 event_candidate_set_id=event_candidate_set_id,
@@ -195,6 +219,8 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                 pending_payload_bytes=pending_payload_bytes,
                 in_flight_payload_bytes=in_flight_payload_bytes,
                 peak_modeled_memory_bytes=peak_modeled_memory_bytes,
+                measured_execution_s=measured_execution_s,
+                pacing_overrun_s=pacing_overrun_s,
             )
         )
         sequence += 1
@@ -230,6 +256,24 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                 peak_modeled_memory_bytes=event.peak_modeled_memory_bytes,
             )
 
+    def record_native_events(events: tuple[NativePacedEvent, ...]) -> None:
+        for event in events:
+            if event.kind in inference_counts:
+                inference_counts[event.kind] += 1
+            record(
+                "inference_event",
+                event.detail,
+                inference_event_kind=event.kind,
+                request_id=event.request_id,
+                event_observation_id=event.observation_id,
+                queue_depth=event.queue_depth,
+                episode_id=episode_id,
+                event_candidate_set_id=configuration.candidate_set_id,
+                event_model_sha256=risk_model.sha256 if risk_model is not None else None,
+                timing_provenance="measured",
+                measured_execution_s=event.execution_s,
+            )
+
     def transition(next_phase: MissionPhase) -> None:
         nonlocal phase
         phase = next_phase
@@ -241,9 +285,36 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
     outcome: MissionOutcome
     terminal_reason: str
     terminal_failure: TerminalFailure | None = None
+    wall_started_s = time.perf_counter()
+    pacing_overruns = 0
+    maximum_pacing_overrun_s = 0.0
 
     while True:
+        if native_paced is not None:
+            target_wall_s = wall_started_s + simulated_time
+            remaining_s = target_wall_s - time.perf_counter()
+            if remaining_s > 0:
+                time.sleep(remaining_s)
+            pacing_overrun_s = max(0.0, time.perf_counter() - target_wall_s)
+        else:
+            pacing_overrun_s = 0.0
         planning_tick = simulated_time >= next_planning_time - 1e-12
+        if (
+            native_paced is not None
+            and planning_tick
+            and pacing_overrun_s > configuration.pacing_overrun_limit_s
+        ):
+            pacing_overruns += 1
+            maximum_pacing_overrun_s = max(maximum_pacing_overrun_s, pacing_overrun_s)
+            record(
+                "pacing_overrun",
+                (
+                    f"wall-clock schedule exceeded by {pacing_overrun_s:.9f}s; "
+                    f"limit {configuration.pacing_overrun_limit_s:.9f}s"
+                ),
+                timing_provenance="measured",
+                pacing_overrun_s=pacing_overrun_s,
+            )
         if planning_tick:
             latest_ranges = _range_readings(pose, scenario, configuration)
             record(
@@ -367,14 +438,159 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                 )
                 risks = (
                     native_model.evaluate(feature_batch).scores
-                    if native_model is not None
+                    if native_model is not None and native_paced is None
                     else reference_risks
                 )
                 progress = tuple(
                     candidate_progress_score(waypoint_x, waypoint_y, candidate)
                     for candidate in CANDIDATE_COMMANDS
                 )
-                if virtual_device is not None:
+                if native_paced is not None:
+                    native_completion, native_events = native_paced.poll(simulated_time)
+                    record_native_events(native_events)
+                    if native_completion is not None:
+                        accepted = native_paced.accept(
+                            native_completion,
+                            simulated_time,
+                            maximum_age_s=configuration.modeled_device.maximum_age_s,
+                        )
+                        age_s = simulated_time - native_completion.request.observed_at_s
+                        if age_s > configuration.modeled_device.deadline_s:
+                            inference_counts["deadline_misses"] += 1
+                            record(
+                                "inference_event",
+                                "native completion exceeded the reporting deadline",
+                                inference_event_kind="deadline_missed",
+                                request_id=native_completion.request.request_id,
+                                event_observation_id=native_completion.request.observation_id,
+                                observation_age_s=round(age_s, 9),
+                                episode_id=episode_id,
+                                event_candidate_set_id=configuration.candidate_set_id,
+                                event_model_sha256=risk_model.sha256,
+                                timing_provenance="measured",
+                                measured_execution_s=native_completion.execution_s,
+                            )
+                        if accepted is None:
+                            inference_counts["expired"] += 1
+                            record(
+                                "inference_event",
+                                (
+                                    f"native result age {age_s:.6f}s exceeded freshness "
+                                    "or older-result precedence"
+                                ),
+                                inference_event_kind="expired",
+                                request_id=native_completion.request.request_id,
+                                event_observation_id=native_completion.request.observation_id,
+                                observation_age_s=round(age_s, 9),
+                                episode_id=episode_id,
+                                event_candidate_set_id=configuration.candidate_set_id,
+                                event_model_sha256=risk_model.sha256,
+                                timing_provenance="measured",
+                                measured_execution_s=native_completion.execution_s,
+                            )
+                        else:
+                            completed_batch, completed_progress, completed_reference = (
+                                native_completion.request.payload
+                            )
+                            del completed_batch
+                            accepted_selection = select_candidate(
+                                native_completion.scores,
+                                completed_progress,
+                                risk_model.risk_cutoff,
+                            )
+                            accepted_observed_at_s = native_completion.request.observed_at_s
+                            accepted_request_id = native_completion.request.request_id
+                            accepted_observation_id = native_completion.request.observation_id
+                            reference_selection = select_candidate(
+                                completed_reference,
+                                completed_progress,
+                                risk_model.risk_cutoff,
+                            )
+                            if (
+                                reference_selection.candidate_index
+                                != accepted_selection.candidate_index
+                            ):
+                                command_disagreements += 1
+                            inference_counts["consumed"] += 1
+                            record(
+                                "control_decision",
+                                accepted_selection.reason,
+                                candidate_risks=tuple(
+                                    round(risk, 9) for risk in native_completion.scores
+                                ),
+                                selected_candidate_index=accepted_selection.candidate_index,
+                                risk_cutoff=risk_model.risk_cutoff,
+                                selected_risk=round(accepted_selection.risk, 9),
+                                selected_progress_score=round(
+                                    accepted_selection.progress_score, 9
+                                ),
+                                request_id=native_completion.request.request_id,
+                                event_observation_id=native_completion.request.observation_id,
+                                observation_age_s=round(age_s, 9),
+                                episode_id=episode_id,
+                                event_candidate_set_id=configuration.candidate_set_id,
+                                event_model_sha256=risk_model.sha256,
+                                timing_provenance="measured",
+                                measured_execution_s=native_completion.execution_s,
+                            )
+                    current_observation_id = observation_id
+                    observation_id += 1
+                    inference_counts["scheduled"] += 1
+                    native_request = InferenceRequest(
+                        episode_id=episode_id,
+                        observation_id=current_observation_id,
+                        request_id=current_observation_id,
+                        candidate_set_id=configuration.candidate_set_id
+                        or "candidate-set-v1",
+                        model_sha256=risk_model.sha256,
+                        observed_at_s=simulated_time,
+                        payload=(feature_batch, progress, reference_risks),
+                    )
+                    record(
+                        "inference_event",
+                        "observation and native inference request created",
+                        inference_event_kind="request_created",
+                        request_id=current_observation_id,
+                        event_observation_id=current_observation_id,
+                        queue_depth=0,
+                        episode_id=episode_id,
+                        event_candidate_set_id=native_request.candidate_set_id,
+                        event_model_sha256=risk_model.sha256,
+                        timing_provenance="measured",
+                    )
+                    record_native_events(native_paced.submit(native_request, simulated_time))
+                    if (
+                        accepted_selection is not None
+                        and accepted_observed_at_s is not None
+                        and simulated_time - accepted_observed_at_s
+                        <= configuration.modeled_device.maximum_age_s
+                    ):
+                        selection = accepted_selection
+                    else:
+                        if accepted_selection is not None and accepted_observed_at_s is not None:
+                            inference_counts["expired"] += 1
+                            record(
+                                "inference_event",
+                                "accepted native result exceeded maximum observation age",
+                                inference_event_kind="expired",
+                                request_id=accepted_request_id,
+                                event_observation_id=accepted_observation_id,
+                                observation_age_s=round(
+                                    simulated_time - accepted_observed_at_s, 9
+                                ),
+                                episode_id=episode_id,
+                                event_candidate_set_id=configuration.candidate_set_id,
+                                event_model_sha256=risk_model.sha256,
+                                timing_provenance="measured",
+                            )
+                            accepted_selection = None
+                            accepted_observed_at_s = None
+                            accepted_request_id = None
+                            accepted_observation_id = None
+                        desired_linear = 0.0
+                        desired_angular = 0.0
+                        selection = None
+                elif virtual_device is not None:
                     record_device_events(virtual_device.advance(simulated_time))
                     current_observation_id = observation_id
                     observation_id += 1
@@ -399,15 +615,15 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                         event_candidate_set_id=inference_request.candidate_set_id,
                         event_model_sha256=inference_request.model_sha256,
                     )
-                    completed, events = virtual_device.consume_latest(simulated_time)
+                    virtual_completion, events = virtual_device.consume_latest(simulated_time)
                     record_device_events(events)
-                    if completed is not None:
-                        completed_risks, completed_progress = completed.request.payload
+                    if virtual_completion is not None:
+                        completed_risks, completed_progress = virtual_completion.request.payload
                         accepted_selection = select_candidate(
                             completed_risks, completed_progress, risk_model.risk_cutoff
                         )
-                        accepted_observed_at_s = completed.request.observed_at_s
-                        age_s = simulated_time - completed.request.observed_at_s
+                        accepted_observed_at_s = virtual_completion.request.observed_at_s
+                        age_s = simulated_time - virtual_completion.request.observed_at_s
                         record(
                             "control_decision",
                             accepted_selection.reason,
@@ -418,8 +634,8 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                             selected_progress_score=round(
                                 accepted_selection.progress_score, 9
                             ),
-                            request_id=completed.request.request_id,
-                            event_observation_id=completed.request.observation_id,
+                            request_id=virtual_completion.request.request_id,
+                            event_observation_id=virtual_completion.request.observation_id,
                             observation_age_s=round(age_s, 9),
                         )
                     record_device_events(
@@ -461,7 +677,7 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                         selection = None
                 else:
                     selection = select_candidate(risks, progress, risk_model.risk_cutoff)
-                if native_model is not None and selection is not None:
+                if native_model is not None and native_paced is None and selection is not None:
                     reference_selection = select_candidate(
                         reference_risks, progress, risk_model.risk_cutoff
                     )
@@ -470,7 +686,7 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                 if selection is not None:
                     desired_linear = selection.command.linear_velocity_mps
                     desired_angular = selection.command.angular_velocity_radps
-                    if virtual_device is None:
+                    if virtual_device is None and native_paced is None:
                         record(
                             "control_decision",
                             selection.reason,
@@ -550,6 +766,8 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
 
     if virtual_device is not None:
         record_device_events(virtual_device.release_all(simulated_time))
+    if native_paced is not None:
+        native_paced.close()
     verdict: TestVerdict = "passed" if outcome == request.expected_mission_outcome else "failed"
     return RunResult(
         run_id=str(uuid.uuid4()),
@@ -595,7 +813,18 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
                 **virtual_device.memory_summary,
             }
             if virtual_device is not None
-            else None
+            else (
+                {
+                    **inference_counts,
+                    "execution_mode": "native_paced",
+                    "timing_provenance": "measured",
+                    "pacing_overruns": pacing_overruns,
+                    "maximum_pacing_overrun_s": maximum_pacing_overrun_s,
+                    "pacing_overrun_limit_s": configuration.pacing_overrun_limit_s,
+                }
+                if native_paced is not None
+                else None
+            )
         ),
         configuration_validity=assess_configuration(configuration),
     )
