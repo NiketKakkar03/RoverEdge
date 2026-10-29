@@ -385,6 +385,75 @@ describe("mission replay application", () => {
     );
   });
 
+  test("launches native paced inference and displays measured timing evidence", async () => {
+    const pacedResult: RunResult = {
+      ...result,
+      request: {
+        ...result.request,
+        configuration: {
+          ...result.request.configuration,
+          controller_kind: "learned_collision_risk",
+          inference_backend: "native-naive",
+          execution_mode: "native_paced",
+        },
+      },
+      controller_kind: "learned_collision_risk",
+      inference_backend: "native-naive",
+      command_disagreements: 0,
+      inference_summary: {
+        execution_mode: "native_paced",
+        timing_provenance: "measured",
+        pacing_overruns: 1,
+        maximum_pacing_overrun_s: 0.003,
+      },
+      trace: [
+        ...result.trace,
+        {
+          ...result.trace.at(-1)!,
+          sequence: result.trace.length,
+          kind: "inference_event",
+          inference_event_kind: "completed",
+          request_id: 4,
+          observation_id: 4,
+          timing_provenance: "measured",
+          measured_execution_s: 0.00125,
+        },
+        {
+          ...result.trace.at(-1)!,
+          sequence: result.trace.length + 1,
+          kind: "control_decision",
+          request_id: 4,
+          observation_id: 4,
+          observation_age_s: 0.05,
+          timing_provenance: "measured",
+        },
+      ],
+    };
+    const run = vi.fn(async () => pacedResult);
+    const api: RoverEdgeApi = { getScenarios: async () => [scenario], run };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='native-paced']")!);
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith({
+        ...scenario.default_run_request,
+        configuration: {
+          ...scenario.default_run_request.configuration,
+          controller_kind: "learned_collision_risk",
+          inference_backend: "native-naive",
+          execution_mode: "native_paced",
+        },
+      }),
+    );
+    expect(root.querySelector("[data-field='native-paced']")?.textContent).toContain(
+      "measured native paced · execution 0.001250 s · observation age 0.050 s · request 4 · observation 4 · overruns 1",
+    );
+  });
+
   test("labels modeled memory separately and shows rejection recovery evidence", async () => {
     const modeledResult: RunResult = {
       ...result,

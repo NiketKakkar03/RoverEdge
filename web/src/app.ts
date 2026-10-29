@@ -64,7 +64,8 @@ export interface RunRequest {
     model_sha256?: string | null;
     risk_cutoff?: number | null;
     candidate_set_id?: string | null;
-    execution_mode?: "synchronous" | "virtual_fifo";
+    execution_mode?: "synchronous" | "virtual_fifo" | "native_paced";
+    pacing_overrun_limit_s?: number;
     modeled_device?: {
       dispatch_s: number;
       input_transfer_s: number;
@@ -95,7 +96,8 @@ interface TraceEvent extends ReplayEvent {
     | "braking_started"
     | "collision"
     | "control_decision"
-    | "inference_event";
+    | "inference_event"
+    | "pacing_overrun";
   pose: Pose;
   linear_velocity_mps: number;
   angular_velocity_radps: number;
@@ -123,6 +125,8 @@ interface TraceEvent extends ReplayEvent {
   pending_payload_bytes?: number | null;
   in_flight_payload_bytes?: number | null;
   peak_modeled_memory_bytes?: number | null;
+  measured_execution_s?: number | null;
+  pacing_overrun_s?: number | null;
 }
 
 export interface RunResult {
@@ -373,6 +377,7 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
       formatRuntimeEvidence(result),
     );
     setText(root, "modeled-memory", formatModeledMemory(result));
+    setText(root, "native-paced", formatNativePaced(result));
     setText(root, "configuration-validity", formatConfigurationValidity(result));
     setText(
       root,
@@ -421,6 +426,21 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
             ...scenario.default_run_request.configuration,
             controller_kind: "learned_collision_risk",
             inference_backend: "native-naive",
+          },
+        }),
+      ),
+    );
+  root
+    .querySelector("[data-action='native-paced']")!
+    .addEventListener("click", () =>
+      void run(() =>
+        api.run({
+          ...scenario.default_run_request,
+          configuration: {
+            ...scenario.default_run_request.configuration,
+            controller_kind: "learned_collision_risk",
+            inference_backend: "native-naive",
+            execution_mode: "native_paced",
           },
         }),
       ),
@@ -655,6 +675,26 @@ function formatModeledMemory(result: RunResult): string {
   ].join(" · ");
 }
 
+function formatNativePaced(result: RunResult): string {
+  const summary = result.inference_summary;
+  if (!summary || summary.timing_provenance !== "measured") return "Not applicable";
+  const completion = [...result.trace]
+    .reverse()
+    .find((event) => event.inference_event_kind === "completed");
+  const decision = [...result.trace]
+    .reverse()
+    .find((event) => event.kind === "control_decision");
+  return [
+    "measured native paced",
+    `execution ${completion?.measured_execution_s?.toFixed(6) ?? "unavailable"} s`,
+    `observation age ${decision?.observation_age_s?.toFixed(3) ?? "unavailable"} s`,
+    `request ${decision?.request_id ?? "unavailable"}`,
+    `observation ${decision?.observation_id ?? "unavailable"}`,
+    `overruns ${summary.pacing_overruns ?? 0}`,
+    `maximum overrun ${Number(summary.maximum_pacing_overrun_s ?? 0).toFixed(6)} s`,
+  ].join(" · ");
+}
+
 function formatConfigurationValidity(result: RunResult): string {
   const validity = result.configuration_validity;
   if (!validity) return "Not available";
@@ -882,6 +922,7 @@ function applicationMarkup(): string {
         <button data-action="start">Start run</button>
         <button data-action="learned">Run learned controller</button>
         <button data-action="native">Run native naive</button>
+        <button data-action="native-paced">Run native paced</button>
         <button data-action="blocked">Run native blocked</button>
         <button data-action="parallel">Run native parallel (4 workers)</button>
         <button data-action="accelerate">Run Apple Accelerate</button>
@@ -917,6 +958,7 @@ function applicationMarkup(): string {
             <label>Execution mode<select data-setting="execution-mode">
               <option value="synchronous">Synchronous</option>
               <option value="virtual_fifo">Virtual modeled device</option>
+              <option value="native_paced">Native wall-clock paced</option>
             </select></label>
             <label>Queue policy<select data-setting="queue-policy">
               <option value="fifo">FIFO</option><option value="latest_pending">Latest pending</option>
@@ -949,6 +991,7 @@ function applicationMarkup(): string {
           <dt>Validation evidence</dt><dd data-field="validation">Not applicable</dd>
           <dt>Inference runtime</dt><dd data-field="runtime">Not applicable</dd>
           <dt>Modeled memory</dt><dd data-field="modeled-memory">Not applicable</dd>
+          <dt>Native paced timing</dt><dd data-field="native-paced">Not applicable</dd>
           <dt>Configuration validity</dt><dd data-field="configuration-validity">Not available</dd>
           <dt>Comparison validity</dt><dd data-field="comparison-validity">Not available</dd>
           <dt>Configuration error</dt><dd data-field="configuration-error">None</dd>

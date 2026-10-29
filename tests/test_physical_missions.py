@@ -1,4 +1,5 @@
 import math
+import time
 from dataclasses import replace
 
 import pytest
@@ -91,6 +92,56 @@ def test_native_naive_learned_mission_records_runtime_provenance() -> None:
     assert result.runtime_provenance["timing_provenance"] == "not_measured"
     assert result.runtime_provenance["model_sha256"] == result.model_sha256
     assert result.command_disagreements == 0
+
+
+def test_native_paced_mission_continues_while_measured_inference_completes() -> None:
+    base = physical_run_request("preset-open-v2")
+    request = replace(
+        base,
+        configuration=replace(
+            base.configuration,
+            controller_kind="learned_collision_risk",
+            inference_backend="native-naive",
+            execution_mode="native_paced",
+            timeout_s=0.15,
+            pacing_overrun_limit_s=0.05,
+            modeled_device=replace(
+                base.configuration.modeled_device,
+                maximum_age_s=0.1,
+                deadline_s=0.02,
+            ),
+        ),
+        expected_mission_outcome="timed_out",
+    )
+
+    started = time.perf_counter()
+    result = run_experiment(request)
+    elapsed_s = time.perf_counter() - started
+
+    assert elapsed_s >= 0.15
+    assert result.test_verdict == "passed"
+    assert result.inference_summary is not None
+    assert result.inference_summary["execution_mode"] == "native_paced"
+    assert result.inference_summary["timing_provenance"] == "measured"
+    assert any(event.kind == "pose_sample" for event in result.trace)
+    completions = [
+        event for event in result.trace if event.inference_event_kind == "completed"
+    ]
+    assert completions
+    assert all(event.timing_provenance == "measured" for event in completions)
+    assert all(event.measured_execution_s is not None for event in completions)
+    assert any(
+        event.inference_event_kind == "deadline_missed"
+        and event.timing_provenance == "measured"
+        for event in result.trace
+    )
+    decisions = [event for event in result.trace if event.kind == "control_decision"]
+    assert decisions
+    assert all(event.request_id is not None for event in decisions)
+    assert all(event.observation_id is not None for event in decisions)
+    assert all(event.episode_id is not None for event in decisions)
+    assert all(event.event_candidate_set_id is not None for event in decisions)
+    assert all(event.event_model_sha256 == result.model_sha256 for event in decisions)
 
 
 def test_native_blocked_learned_mission_records_backend_configuration() -> None:
