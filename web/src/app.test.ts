@@ -219,6 +219,12 @@ describe("mission replay application", () => {
     expect(root.querySelector("[data-field='configuration']")?.textContent).toContain(
       "dock heading tolerance",
     );
+    expect(root.querySelector("[data-field='configuration']")?.textContent).toContain(
+      "4 m sensor range",
+    );
+    expect(root.querySelector("[data-field='configuration']")?.textContent).toContain(
+      "32768 B modeled memory budget",
+    );
     for (const phase of phases) {
       expect(root.querySelector("[data-field='phases']")?.textContent).toContain(phase);
     }
@@ -430,6 +436,113 @@ describe("mission replay application", () => {
     );
     expect(root.querySelector("[data-field='modeled-memory']")?.textContent).not.toContain(
       "RSS",
+    );
+  });
+
+  test("round-trips configured runs, classifies differences, and preserves success on error", async () => {
+    let runNumber = 0;
+    const run = vi.fn(async (request: RunResult["request"]): Promise<RunResult> => {
+      if (request.configuration.rover_radius_m <= 0) {
+        throw new Error("rover radius must be positive");
+      }
+      runNumber += 1;
+      return {
+        ...result,
+        run_id: `configured-${runNumber}`,
+        request: structuredClone(request),
+        configuration_validity: {
+          configuration_id: `config-${runNumber}`,
+          rover_type: "differential_drive",
+          model_feature_count: 24,
+          training_domain_status:
+            request.configuration.rover_radius_m === 0.2 ? "inside" : "outside",
+          warnings:
+            request.configuration.rover_radius_m === 0.2
+              ? []
+              : ["rover radius differs from the training condition"],
+        },
+      };
+    });
+    const api: RoverEdgeApi = { getScenarios: async () => [scenario], run };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector("[data-action='configured-run']")!);
+    await waitFor(() => expect(root.querySelector("[data-field='run-id']")?.textContent).toBe("configured-1"));
+    expect(root.querySelector("[data-field='configuration-validity']")?.textContent).toContain(
+      "fixed differential_drive · fixed 24-feature model · training domain inside",
+    );
+
+    fireEvent.input(root.querySelector("[data-setting='rover-radius']")!, {
+      target: { value: "0.25" },
+    });
+    fireEvent.click(root.querySelector("[data-action='configured-run']")!);
+    await waitFor(() => expect(root.querySelector("[data-field='run-id']")?.textContent).toBe("configured-2"));
+    expect(root.querySelector("[data-field='comparison-validity']")?.textContent).toBe(
+      "Controlled comparison valid · 1 changed setting: configuration.rover_radius_m",
+    );
+    expect(run.mock.calls[1]?.[0].expected_mission_outcome).toBe("completed");
+
+    fireEvent.input(root.querySelector("[data-setting='sensor-range']")!, {
+      target: { value: "3.5" },
+    });
+    fireEvent.input(root.querySelector("[data-setting='planning-period']")!, {
+      target: { value: "0.1" },
+    });
+    fireEvent.click(root.querySelector("[data-action='configured-run']")!);
+    await waitFor(() => expect(root.querySelector("[data-field='run-id']")?.textContent).toBe("configured-3"));
+    expect(root.querySelector("[data-field='comparison-validity']")?.textContent).toContain(
+      "Exploratory comparison · 2 changed settings: configuration.planning_period_s, configuration.range_max_m",
+    );
+
+    fireEvent.input(root.querySelector("[data-setting='rover-radius']")!, {
+      target: { value: "0" },
+    });
+    fireEvent.click(root.querySelector("[data-action='configured-run']")!);
+    await waitFor(() =>
+      expect(root.querySelector("[data-field='configuration-error']")?.textContent).toBe(
+        "rover radius must be positive",
+      ),
+    );
+    expect(root.querySelector("[data-field='run-id']")?.textContent).toBe("configured-3");
+    expect(root.querySelector("[data-field='expectation']")?.textContent).toBe("completed");
+  });
+
+  test("includes scenario identity in comparison validity", async () => {
+    const narrow: Scenario = {
+      ...scenario,
+      scenario_version: "preset-narrow-v1",
+      name: "Narrow inspection corridor",
+      default_run_request: {
+        ...scenario.default_run_request,
+        scenario_version: "preset-narrow-v1",
+      },
+    };
+    const run = vi.fn(async (request: RunResult["request"]): Promise<RunResult> => ({
+      ...result,
+      request,
+    }));
+    const api: RoverEdgeApi = { getScenarios: async () => [scenario, narrow], run };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector("[data-action='configured-run']")!);
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    fireEvent.change(root.querySelector("[data-action='scenario']")!, {
+      target: { value: "preset-narrow-v1" },
+    });
+    fireEvent.input(root.querySelector("[data-setting='rover-radius']")!, {
+      target: { value: "0.25" },
+    });
+    fireEvent.click(root.querySelector("[data-action='configured-run']")!);
+
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(root.querySelector("[data-field='comparison-validity']")?.textContent).toContain(
+      "Exploratory comparison · 2 changed settings: configuration.rover_radius_m, scenario_version",
     );
   });
 
@@ -700,6 +813,22 @@ describe("mission replay application", () => {
     expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/runs");
     const requestOptions = fetchMock.mock.calls[2]?.[1];
     expect(JSON.parse(String(requestOptions?.body))).toEqual(scenario.default_run_request);
+    vi.unstubAllGlobals();
+  });
+
+  test("HTTP adapter exposes FastAPI validation messages", async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+      Response.json(
+        { detail: [{ msg: "Value error, rover radius must be positive" }] },
+        { status: 422 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(httpApi.run(scenario.default_run_request)).rejects.toThrow(
+      "Value error, rover radius must be positive",
+    );
+
     vi.unstubAllGlobals();
   });
 });

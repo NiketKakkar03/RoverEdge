@@ -108,3 +108,44 @@ def test_browser_api_reports_unavailable_native_backend(monkeypatch) -> None:
 
     assert response.status_code == 422
     assert response.json()["detail"] == "Apple Accelerate backend is unavailable on this host"
+
+
+def test_browser_api_round_trips_configured_experiment_and_validity_evidence() -> None:
+    client = TestClient(app)
+    request = asdict(physical_run_request("preset-open-v2"))
+    request["configuration"]["controller_kind"] = "learned_collision_risk"
+    request["configuration"]["rover_radius_m"] = 0.25
+    request["configuration"]["planning_period_s"] = 0.1
+    request["configuration"]["modeled_device"]["memory_budget_bytes"] = 40_000
+
+    response = client.post("/api/runs", json=request)
+
+    assert response.status_code == 200
+    result = response.json()
+    request["configuration"].update(
+        {
+            "model_artifact_version": "risk-model-v1",
+            "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
+            "risk_cutoff": 0.05,
+            "candidate_set_id": "fixed-eight-v1",
+        }
+    )
+    assert result["request"] == request
+    assert result["configuration_validity"]["configuration_id"].startswith("config-")
+    assert result["configuration_validity"]["rover_type"] == "differential_drive"
+    assert result["configuration_validity"]["model_feature_count"] == 24
+    assert result["configuration_validity"]["training_domain_status"] == "outside"
+    assert result["request"]["expected_mission_outcome"] == "completed"
+
+
+def test_browser_api_explicitly_rejects_unsupported_worker_combination() -> None:
+    client = TestClient(app)
+    request = asdict(physical_run_request("preset-open-v2"))
+    request["configuration"]["controller_kind"] = "learned_collision_risk"
+    request["configuration"]["inference_backend"] = "native-naive"
+    request["configuration"]["inference_workers"] = 2
+
+    response = client.post("/api/runs", json=request)
+
+    assert response.status_code == 422
+    assert "only parallel blocked inference" in str(response.json())

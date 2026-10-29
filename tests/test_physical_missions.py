@@ -1,9 +1,11 @@
+import math
 from dataclasses import replace
 
 import pytest
 
 from roveredge import physical_run_request, run_experiment
 from roveredge.device import ModeledDeviceProfile, QueuePolicy
+from roveredge.models import RunConfiguration
 from roveredge.native import accelerate_available
 
 
@@ -299,6 +301,60 @@ def test_virtual_device_reports_modeled_memory_rejection_and_terminal_recovery()
         and event.modeled_memory_bytes == 18_948
         for event in result.trace
     )
+
+
+def test_runner_records_reproducible_configuration_identity_and_training_warnings() -> None:
+    base = physical_run_request("preset-open-v2")
+    request = replace(
+        base,
+        configuration=replace(
+            base.configuration,
+            controller_kind="learned_collision_risk",
+            rover_radius_m=0.25,
+            range_max_m=3.5,
+            planning_period_s=0.1,
+        ),
+    )
+
+    result = run_experiment(request)
+    repeated = run_experiment(request)
+
+    assert result.configuration_validity is not None
+    assert result.configuration_validity == repeated.configuration_validity
+    assert result.configuration_validity.rover_type == "differential_drive"
+    assert result.configuration_validity.model_feature_count == 24
+    assert result.configuration_validity.training_domain_status == "outside"
+    assert result.configuration_validity.warnings == (
+        "rover radius 0.25 m differs from the 0.2 m training condition",
+        "sensor range 3.5 m differs from the 4.0 m training condition",
+        "planning period 0.1 s differs from the 0.05 s training condition",
+    )
+    assert result.request.configuration.rover_radius_m == 0.25
+    assert result.request.configuration.range_max_m == 3.5
+    assert result.request.configuration.planning_period_s == 0.1
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"rover_radius_m": math.nan}, "finite"),
+        ({"range_max_m": math.inf}, "finite"),
+        ({"planning_period_s": math.nan}, "finite"),
+        (
+            {"inference_backend": "native-naive", "inference_workers": 2},
+            "only parallel blocked inference",
+        ),
+        (
+            {"execution_mode": "virtual_fifo", "inference_backend": "native-blocked"},
+            "virtual modeled execution requires python-reference",
+        ),
+    ],
+)
+def test_run_configuration_rejects_invalid_or_unsupported_settings(
+    changes: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        replace(RunConfiguration(), **changes)
 
 
 def test_uncongested_steady_and_burst_policy_pairs_preserve_actual_outcomes() -> None:

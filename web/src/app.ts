@@ -154,6 +154,13 @@ export interface RunResult {
   runtime_provenance?: Record<string, string> | null;
   command_disagreements?: number | null;
   inference_summary?: Record<string, number | string> | null;
+  configuration_validity?: {
+    configuration_id: string;
+    rover_type: "differential_drive";
+    model_feature_count: 24;
+    training_domain_status: "inside" | "outside" | "not_applicable";
+    warnings: string[];
+  } | null;
   terminal_failure?: {
     code: "collision" | "unreachable" | "timeout";
     message: string;
@@ -211,6 +218,7 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     memoryBudget.value = String(
       scenario.default_run_request.configuration.modeled_device?.memory_budget_bytes ?? 32768,
     );
+    populateExperimentForm(root, scenario.default_run_request);
   };
   showScenario();
   if (api.getAccelerateComparison) {
@@ -234,6 +242,7 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   let replay: ReplayController | undefined;
   let replayStartedAt = 0;
   let replayStartTime = 0;
+  let previousSuccessfulRequest: RunRequest | undefined;
 
   const render = (): void => {
     if (!result || !replay) return;
@@ -314,10 +323,20 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
 
   const run = async (runRequest: () => Promise<RunResult>): Promise<void> => {
     setText(root, "status", "Running deterministic experiment…");
-    result = await runRequest();
+    let nextResult: RunResult;
+    try {
+      nextResult = await runRequest();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setText(root, "configuration-error", message);
+      setText(root, "status", "Configuration rejected; last successful run preserved.");
+      return;
+    }
+    result = nextResult;
     replay = new ReplayController(result.trace);
     replayStartedAt = 0;
     replayStartTime = 0;
+    setText(root, "configuration-error", "None");
     setText(root, "status", result.terminal_reason);
     setText(
       root,
@@ -354,6 +373,13 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
       formatRuntimeEvidence(result),
     );
     setText(root, "modeled-memory", formatModeledMemory(result));
+    setText(root, "configuration-validity", formatConfigurationValidity(result));
+    setText(
+      root,
+      "comparison-validity",
+      formatComparisonValidity(previousSuccessfulRequest, result.request),
+    );
+    previousSuccessfulRequest = result.request;
     setText(
       root,
       "phases",
@@ -461,6 +487,11 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
         }),
       );
     });
+  root
+    .querySelector("[data-action='configured-run']")!
+    .addEventListener("click", () =>
+      void run(() => api.run(configuredRequest(root, scenario.default_run_request))),
+    );
   selector.addEventListener("change", () => {
     scenario = scenarios.find((item) => item.scenario_version === selector.value)!;
     showScenario();
@@ -500,7 +531,15 @@ async function requestJson<T>(path: string, body?: RunRequest): Promise<T> {
     headers: body ? { "Content-Type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!response.ok) throw new Error(`Request failed with status ${response.status}`);
+  if (!response.ok) {
+    const error = (await response.json()) as {
+      detail?: string | Array<{ msg?: string }>;
+    };
+    const detail = Array.isArray(error.detail)
+      ? error.detail.map((item) => item.msg).filter(Boolean).join("; ")
+      : error.detail;
+    throw new Error(detail || `Request failed with status ${response.status}`);
+  }
   return (await response.json()) as T;
 }
 
@@ -514,12 +553,18 @@ function humanize(value: string): string {
 
 function formatConfiguration(request: RunRequest): string {
   const { configuration } = request;
-  return [
+  const parts = [
     `${configuration.simulation_step_s * 1000} ms step`,
     `${configuration.physics_step_s * 1000} ms physics`,
     `${configuration.planning_period_s * 1000} ms planning`,
+    `${configuration.rover_radius_m} m rover radius`,
     `${configuration.motion.max_linear_speed_mps} m/s linear max`,
     `${configuration.motion.max_angular_speed_radps} rad/s angular max`,
+    `${configuration.max_linear_acceleration_mps2} m/s² linear acceleration`,
+    `${configuration.max_braking_deceleration_mps2} m/s² braking`,
+    `${configuration.max_angular_acceleration_radps2} rad/s² angular acceleration`,
+    `${configuration.range_ray_count} fixed range rays`,
+    `${configuration.range_max_m} m sensor range`,
     `${configuration.inspection.position_tolerance_m} m inspection position tolerance`,
     `${configuration.inspection.heading_tolerance_rad} rad inspection heading tolerance`,
     `${configuration.inspection.dwell_s} s dwell`,
@@ -529,7 +574,20 @@ function formatConfiguration(request: RunRequest): string {
     `${humanize(configuration.controller_kind)} controller`,
     `${humanize(configuration.inference_backend ?? "python-reference")} inference`,
     `${configuration.inference_workers ?? 1} inference worker(s)`,
-  ].join(" · ");
+    `${humanize(configuration.execution_mode ?? "synchronous")} execution`,
+  ];
+  const device = configuration.modeled_device;
+  if (device) {
+    parts.push(
+      `${humanize(device.queue_policy)} queue`,
+      `${device.pending_capacity} pending capacity`,
+      `${device.deadline_s} s reporting deadline`,
+      `${device.maximum_age_s} s maximum age`,
+      `${device.dispatch_s}/${device.input_transfer_s}/${device.compute_s}/${device.output_transfer_s} s dispatch/input/compute/output`,
+      `${device.memory_budget_bytes} B modeled memory budget`,
+    );
+  }
+  return parts.join(" · ");
 }
 
 function formatRuntimeEvidence(result: RunResult): string {
@@ -595,6 +653,130 @@ function formatModeledMemory(result: RunResult): string {
     `rejections ${summary.memory_rejections}`,
     recovered,
   ].join(" · ");
+}
+
+function formatConfigurationValidity(result: RunResult): string {
+  const validity = result.configuration_validity;
+  if (!validity) return "Not available";
+  const warnings = validity.warnings.length
+    ? validity.warnings.join("; ")
+    : "no training-domain warnings";
+  return `${validity.configuration_id} · fixed ${validity.rover_type} · fixed ${validity.model_feature_count}-feature model · training domain ${validity.training_domain_status} · ${warnings}`;
+}
+
+function formatComparisonValidity(
+  previous: RunRequest | undefined,
+  current: RunRequest,
+): string {
+  if (!previous) return "First successful configuration; comparison not yet available";
+  const differences = runRequestDifferences(previous, current);
+  if (differences.length === 0) return "Reproducible replay · no configuration differences";
+  const prefix =
+    differences.length === 1
+      ? "Controlled comparison valid · 1 changed setting"
+      : `Exploratory comparison · ${differences.length} changed settings`;
+  return `${prefix}: ${differences.join(", ")}`;
+}
+
+function runRequestDifferences(previous: RunRequest, current: RunRequest): string[] {
+  const flatten = (value: unknown, prefix = ""): Record<string, unknown> => {
+    if (typeof value !== "object" || value === null) {
+      return { [prefix]: value };
+    }
+    if (Array.isArray(value)) {
+      return value.reduce<Record<string, unknown>>((result, child, index) => {
+        const path = `${prefix}[${index}]`;
+        return { ...result, ...flatten(child, path) };
+      }, {});
+    }
+    return Object.entries(value).reduce<Record<string, unknown>>((result, [key, child]) => {
+      const path = prefix ? `${prefix}.${key}` : key;
+      return { ...result, ...flatten(child, path) };
+    }, {});
+  };
+  const before = flatten(previous);
+  const after = flatten(current);
+  return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+    .filter((key) => before[key] !== after[key])
+    .sort();
+}
+
+function populateExperimentForm(root: HTMLElement, request: RunRequest): void {
+  const configuration = request.configuration;
+  const device = configuration.modeled_device!;
+  const values: Record<string, number | string> = {
+    "rover-radius": configuration.rover_radius_m,
+    "max-linear-speed": configuration.motion.max_linear_speed_mps,
+    "max-angular-speed": configuration.motion.max_angular_speed_radps,
+    "linear-acceleration": configuration.max_linear_acceleration_mps2,
+    "braking-deceleration": configuration.max_braking_deceleration_mps2,
+    "angular-acceleration": configuration.max_angular_acceleration_radps2,
+    "sensor-range": configuration.range_max_m,
+    "planning-period": configuration.planning_period_s,
+    backend: configuration.inference_backend ?? "python-reference",
+    workers: configuration.inference_workers ?? 1,
+    "execution-mode": configuration.execution_mode ?? "synchronous",
+    "queue-policy": device.queue_policy,
+    "pending-capacity": device.pending_capacity,
+    deadline: device.deadline_s,
+    "maximum-age": device.maximum_age_s,
+    dispatch: device.dispatch_s,
+    "input-transfer": device.input_transfer_s,
+    compute: device.compute_s,
+    "output-transfer": device.output_transfer_s,
+    "memory-budget": device.memory_budget_bytes,
+  };
+  for (const [name, value] of Object.entries(values)) {
+    const element = root.querySelector<HTMLInputElement | HTMLSelectElement>(
+      `[data-setting='${name}']`,
+    )!;
+    element.value = String(value);
+  }
+}
+
+function configuredRequest(root: HTMLElement, base: RunRequest): RunRequest {
+  const value = (name: string): string =>
+    root.querySelector<HTMLInputElement | HTMLSelectElement>(
+      `[data-setting='${name}']`,
+    )!.value;
+  const number = (name: string): number => Number(value(name));
+  const device = base.configuration.modeled_device!;
+  return {
+    ...base,
+    configuration: {
+      ...base.configuration,
+      rover_radius_m: number("rover-radius"),
+      motion: {
+        max_linear_speed_mps: number("max-linear-speed"),
+        max_angular_speed_radps: number("max-angular-speed"),
+      },
+      max_linear_acceleration_mps2: number("linear-acceleration"),
+      max_braking_deceleration_mps2: number("braking-deceleration"),
+      max_angular_acceleration_radps2: number("angular-acceleration"),
+      range_max_m: number("sensor-range"),
+      planning_period_s: number("planning-period"),
+      controller_kind: "learned_collision_risk",
+      inference_backend: value("backend") as NonNullable<
+        RunRequest["configuration"]["inference_backend"]
+      >,
+      inference_workers: number("workers"),
+      execution_mode: value("execution-mode") as NonNullable<
+        RunRequest["configuration"]["execution_mode"]
+      >,
+      modeled_device: {
+        ...device,
+        queue_policy: value("queue-policy") as "fifo" | "latest_pending",
+        pending_capacity: number("pending-capacity"),
+        deadline_s: number("deadline"),
+        maximum_age_s: number("maximum-age"),
+        dispatch_s: number("dispatch"),
+        input_transfer_s: number("input-transfer"),
+        compute_s: number("compute"),
+        output_transfer_s: number("output-transfer"),
+        memory_budget_bytes: number("memory-budget"),
+      },
+    },
+  };
 }
 
 function drawScene(
@@ -711,6 +893,46 @@ function applicationMarkup(): string {
           </label>
           <button data-action="modeled-memory">Run modeled memory experiment</button>
         </div>
+        <details>
+          <summary>Configure rover and device experiment</summary>
+          <div class="configuration-grid">
+            <label>Rover radius (m)<input data-setting="rover-radius" type="number" step="0.01"></label>
+            <label>Maximum linear speed (m/s)<input data-setting="max-linear-speed" type="number" step="0.01"></label>
+            <label>Maximum angular speed (rad/s)<input data-setting="max-angular-speed" type="number" step="0.01"></label>
+            <label>Linear acceleration (m/s²)<input data-setting="linear-acceleration" type="number" step="0.01"></label>
+            <label>Braking deceleration (m/s²)<input data-setting="braking-deceleration" type="number" step="0.01"></label>
+            <label>Angular acceleration (rad/s²)<input data-setting="angular-acceleration" type="number" step="0.01"></label>
+            <label>Sensor range (m)<input data-setting="sensor-range" type="number" step="0.1"></label>
+            <label>Planning period (s)<input data-setting="planning-period" type="number" step="0.001"></label>
+            <label>Inference backend<select data-setting="backend">
+              <option value="python-reference">Python reference</option>
+              <option value="native-naive">Native naive</option>
+              <option value="native-blocked">Native blocked</option>
+              <option value="native-parallel-blocked">Native parallel blocked</option>
+              <option value="native-accelerate">Apple Accelerate</option>
+            </select></label>
+            <label>Inference workers<select data-setting="workers">
+              <option value="1">1</option><option value="2">2</option><option value="4">4</option>
+            </select></label>
+            <label>Execution mode<select data-setting="execution-mode">
+              <option value="synchronous">Synchronous</option>
+              <option value="virtual_fifo">Virtual modeled device</option>
+            </select></label>
+            <label>Queue policy<select data-setting="queue-policy">
+              <option value="fifo">FIFO</option><option value="latest_pending">Latest pending</option>
+            </select></label>
+            <label>Pending capacity<input data-setting="pending-capacity" type="number" step="1"></label>
+            <label>Reporting deadline (s)<input data-setting="deadline" type="number" step="0.001"></label>
+            <label>Maximum observation age (s)<input data-setting="maximum-age" type="number" step="0.001"></label>
+            <label>Dispatch cost (s)<input data-setting="dispatch" type="number" step="0.001"></label>
+            <label>Input transfer cost (s)<input data-setting="input-transfer" type="number" step="0.001"></label>
+            <label>Compute cost (s)<input data-setting="compute" type="number" step="0.001"></label>
+            <label>Output transfer cost (s)<input data-setting="output-transfer" type="number" step="0.001"></label>
+            <label>Modeled memory budget (bytes)<input data-setting="memory-budget" type="number" step="1"></label>
+          </div>
+          <p>Fixed contract: differential-drive rover · 16 range rays · 24 model features · fixed candidate structure.</p>
+          <button data-action="configured-run">Run saved configuration</button>
+        </details>
     </section>
     <section class="mission-grid">
       <div class="stage"><canvas width="800" height="600" aria-label="Recorded mission replay"></canvas></div>
@@ -727,6 +949,9 @@ function applicationMarkup(): string {
           <dt>Validation evidence</dt><dd data-field="validation">Not applicable</dd>
           <dt>Inference runtime</dt><dd data-field="runtime">Not applicable</dd>
           <dt>Modeled memory</dt><dd data-field="modeled-memory">Not applicable</dd>
+          <dt>Configuration validity</dt><dd data-field="configuration-validity">Not available</dd>
+          <dt>Comparison validity</dt><dd data-field="comparison-validity">Not available</dd>
+          <dt>Configuration error</dt><dd data-field="configuration-error">None</dd>
           <dt>Accelerate comparison</dt><dd data-field="accelerate-comparison">Recorded evidence unavailable</dd>
           <dt>Phase</dt><dd data-field="phase">Not started</dd>
           <dt>Simulated time</dt><dd data-field="time">0.00 s</dd>
