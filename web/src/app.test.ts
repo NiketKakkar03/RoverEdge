@@ -547,10 +547,19 @@ describe("mission replay application", () => {
     fireEvent.input(root.querySelector("[data-setting='rover-radius']")!, {
       target: { value: "0.25" },
     });
+    fireEvent.change(root.querySelector("[data-action='comparison-mode']")!, {
+      target: { value: "controlled" },
+    });
     fireEvent.click(root.querySelector("[data-action='configured-run']")!);
     await waitFor(() => expect(root.querySelector("[data-field='run-id']")?.textContent).toBe("configured-2"));
     expect(root.querySelector("[data-field='comparison-validity']")?.textContent).toBe(
-      "Controlled comparison valid · 1 changed setting: configuration.rover_radius_m",
+      "Controlled comparison valid · declared factor configuration.rover_radius_m",
+    );
+    expect(root.querySelector("[data-field='comparison-evidence']")?.textContent).toContain(
+      "before configured-1 · model not used · numerical disagreements not compared · runtime not measured · mission completed · test passed | after configured-2",
+    );
+    expect(root.querySelector("[data-field='comparison-time']")?.textContent).toBe(
+      "before 0.00 s · after 0.00 s",
     );
     expect(run.mock.calls[1]?.[0].expected_mission_outcome).toBe("completed");
 
@@ -560,10 +569,16 @@ describe("mission replay application", () => {
     fireEvent.input(root.querySelector("[data-setting='planning-period']")!, {
       target: { value: "0.1" },
     });
+    fireEvent.change(root.querySelector("[data-action='comparison-mode']")!, {
+      target: { value: "exploratory" },
+    });
     fireEvent.click(root.querySelector("[data-action='configured-run']")!);
     await waitFor(() => expect(root.querySelector("[data-field='run-id']")?.textContent).toBe("configured-3"));
     expect(root.querySelector("[data-field='comparison-validity']")?.textContent).toContain(
       "Exploratory comparison · 2 changed settings: configuration.planning_period_s, configuration.range_max_m",
+    );
+    expect(root.querySelector("[data-field='comparison-validity']")?.textContent).toContain(
+      "no isolated-cause claim permitted",
     );
 
     fireEvent.input(root.querySelector("[data-setting='rover-radius']")!, {
@@ -577,6 +592,41 @@ describe("mission replay application", () => {
     );
     expect(root.querySelector("[data-field='run-id']")?.textContent).toBe("configured-3");
     expect(root.querySelector("[data-field='expectation']")?.textContent).toBe("completed");
+  });
+
+  test("rejects a controlled declaration when additional request paths change", async () => {
+    let count = 0;
+    const run = vi.fn(async (request: RunResult["request"]): Promise<RunResult> => ({
+      ...result,
+      run_id: `comparison-${++count}`,
+      request: structuredClone(request),
+    }));
+    const api: RoverEdgeApi = { getScenarios: async () => [scenario], run };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector("[data-action='configured-run']")!);
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    fireEvent.change(root.querySelector("[data-action='comparison-mode']")!, {
+      target: { value: "controlled" },
+    });
+    fireEvent.input(root.querySelector("[data-setting='rover-radius']")!, {
+      target: { value: "0.25" },
+    });
+    fireEvent.input(root.querySelector("[data-setting='sensor-range']")!, {
+      target: { value: "3.5" },
+    });
+    fireEvent.click(root.querySelector("[data-action='configured-run']")!);
+
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    expect(root.querySelector("[data-field='comparison-validity']")?.textContent).toContain(
+      "Controlled comparison invalid · declared configuration.rover_radius_m · actual differences: configuration.range_max_m, configuration.rover_radius_m",
+    );
+    expect(root.querySelector("[data-field='comparison-validity']")?.textContent).toContain(
+      "no isolated-cause claim permitted",
+    );
   });
 
   test("includes scenario identity in comparison validity", async () => {
