@@ -31,6 +31,16 @@ class ModeledDeviceProfile:
         )
         if any(not math.isfinite(duration) or duration < 0 for duration in durations):
             raise ValueError("modeled stage durations must be finite and nonnegative")
+        integer_values = (
+            self.pending_capacity,
+            self.requests_per_tick,
+            self.resident_weights_bytes,
+            self.workspace_bytes,
+            self.request_payload_bytes,
+            self.memory_budget_bytes,
+        )
+        if any(type(value) is not int for value in integer_values):
+            raise ValueError("modeled capacities and memory values must be integers")
         if self.pending_capacity < 0:
             raise ValueError("pending capacity cannot be negative")
         if self.requests_per_tick <= 0:
@@ -54,6 +64,8 @@ class ModeledDeviceProfile:
             or self.maximum_age_s < 0
         ):
             raise ValueError("modeled timing limits must be finite and nonnegative")
+        if self.deadline_s > self.maximum_age_s:
+            raise ValueError("reporting deadline cannot exceed maximum observation age")
 
     @property
     def service_s(self) -> float:

@@ -205,6 +205,24 @@ def test_modeled_memory_accepts_exact_boundary_and_rejects_one_byte_less() -> No
     assert constrained_events[0].memory_budget_bytes == 129
 
 
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"pending_capacity": 1.5},
+        {"requests_per_tick": 1.5},
+        {"memory_budget_bytes": 32_768.5},
+    ],
+)
+def test_modeled_device_rejects_noninteger_capacity_and_memory(changes: dict[str, float]) -> None:
+    with pytest.raises(ValueError, match="integers"):
+        ModeledDeviceProfile(**changes)
+
+
+def test_modeled_device_rejects_deadline_beyond_maximum_age() -> None:
+    with pytest.raises(ValueError, match="deadline cannot exceed"):
+        ModeledDeviceProfile(deadline_s=0.2, maximum_age_s=0.1)
+
+
 def test_modeled_memory_releases_payloads_after_completion_replacement_and_expiry() -> None:
     profile = ModeledDeviceProfile(
         compute_s=0.2,

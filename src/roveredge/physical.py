@@ -5,6 +5,7 @@ import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
 
+from .configuration import assess_configuration
 from .device import DeviceEvent, FifoDevice, InferenceRequest
 from .geometry import first_swept_collision, ray_distance
 from .learning import (
@@ -596,6 +597,7 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
             if virtual_device is not None
             else None
         ),
+        configuration_validity=assess_configuration(configuration),
     )
 
 
@@ -632,6 +634,7 @@ def _unreachable_result(
             "artifacts/issue-8/validation-report.json" if risk_model is not None else None
         ),
         validation_quality_gate_status="not_met" if risk_model is not None else None,
+        configuration_validity=assess_configuration(request.configuration),
     )
 
 

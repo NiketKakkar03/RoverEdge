@@ -1,3 +1,4 @@
+import math
 from dataclasses import dataclass
 from typing import Literal
 
@@ -61,6 +62,11 @@ class MotionConfiguration:
     max_angular_speed_radps: float = 0.8
 
     def __post_init__(self) -> None:
+        if not all(
+            math.isfinite(value)
+            for value in (self.max_linear_speed_mps, self.max_angular_speed_radps)
+        ):
+            raise ValueError("motion speed limits must be finite")
         if self.max_linear_speed_mps <= 0 or self.max_angular_speed_radps <= 0:
             raise ValueError("motion speed limits must be positive")
 
@@ -116,6 +122,21 @@ class RunConfiguration:
     modeled_device: ModeledDeviceProfile = ModeledDeviceProfile()
 
     def __post_init__(self) -> None:
+        scalar_values = (
+            self.simulation_step_s,
+            self.physics_step_s,
+            self.planning_period_s,
+            self.rover_radius_m,
+            self.max_linear_acceleration_mps2,
+            self.max_braking_deceleration_mps2,
+            self.max_angular_acceleration_radps2,
+            self.range_max_m,
+            self.route_grid_resolution_m,
+            self.planning_clearance_m,
+            self.timeout_s,
+        )
+        if not all(math.isfinite(value) for value in scalar_values):
+            raise ValueError("run configuration values must be finite")
         if self.simulation_step_s <= 0:
             raise ValueError("simulation step must be positive")
         if self.physics_step_s <= 0 or self.planning_period_s <= 0:
@@ -139,6 +160,12 @@ class RunConfiguration:
             and self.inference_workers not in (1, 2, 4)
         ):
             raise ValueError("parallel blocked inference supports 1, 2, or 4 workers")
+        if self.inference_backend != "native-parallel-blocked" and self.inference_workers != 1:
+            raise ValueError("only parallel blocked inference supports multiple workers")
+        if self.execution_mode == "virtual_fifo" and self.inference_backend != "python-reference":
+            raise ValueError("virtual modeled execution requires python-reference inference")
+        if self.controller_kind == "learned_collision_risk" and self.range_ray_count != 16:
+            raise ValueError("learned collision risk requires the fixed 16-ray feature structure")
 
 
 @dataclass(frozen=True)
@@ -206,6 +233,15 @@ class TerminalFailure:
 
 
 @dataclass(frozen=True)
+class ConfigurationValidity:
+    configuration_id: str
+    rover_type: Literal["differential_drive"]
+    model_feature_count: Literal[24]
+    training_domain_status: Literal["inside", "outside", "not_applicable"]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class RunResult:
     run_id: str
     request: RunRequest
@@ -225,3 +261,4 @@ class RunResult:
     runtime_provenance: dict[str, str] | None = None
     command_disagreements: int | None = None
     inference_summary: dict[str, int | float | str] | None = None
+    configuration_validity: ConfigurationValidity | None = None
