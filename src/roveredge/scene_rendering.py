@@ -20,9 +20,9 @@ class RenderedScene:
 
 def render_scene(scenario_version: str) -> RenderedScene:
     scenario = get_scenario(scenario_version)
-    width = 800
-    height = 600
-    pixels_per_meter = 100.0
+    pixels_per_meter = scenario.pixels_per_meter
+    width = round(scenario.width_m * pixels_per_meter)
+    height = round(scenario.height_m * pixels_per_meter)
     image = Image.new("RGBA", (width, height), (238, 242, 239, 255))
     draw = ImageDraw.Draw(image)
 
@@ -39,8 +39,10 @@ def render_scene(scenario_version: str) -> RenderedScene:
     for item in scenario.visual_objects:
         _composite_visual_object(image, item, pixels_per_meter)
 
-    draw.rectangle((85, 285, 115, 315), fill=(35, 58, 50, 255))
-    draw.ellipse((91, 291, 109, 309), fill=(72, 104, 91, 255))
+    dock_x = round(scenario.dock_pose.x_m * pixels_per_meter)
+    dock_y = round(scenario.dock_pose.y_m * pixels_per_meter)
+    draw.rectangle((dock_x - 15, dock_y - 15, dock_x + 15, dock_y + 15), fill=(35, 58, 50, 255))
+    draw.ellipse((dock_x - 9, dock_y - 9, dock_x + 9, dock_y + 9), fill=(72, 104, 91, 255))
     output = BytesIO()
     image.convert("RGB").save(output, format="PNG", optimize=False, compress_level=9)
     png_bytes = output.getvalue()
@@ -50,7 +52,7 @@ def render_scene(scenario_version: str) -> RenderedScene:
         sha256=hashlib.sha256(png_bytes).hexdigest(),
         width_px=width,
         height_px=height,
-        camera_transform=(0.01, 0.0, 0.0, 0.0, 0.01, 0.0),
+        camera_transform=(1 / pixels_per_meter, 0.0, 0.0, 0.0, 1 / pixels_per_meter, 0.0),
     )
 
 

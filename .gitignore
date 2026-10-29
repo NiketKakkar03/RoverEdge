@@ -1,4 +1,5 @@
 .env
+.roveredge/
 .mypy_cache/
 .pnpm-store/
 .pytest_cache/

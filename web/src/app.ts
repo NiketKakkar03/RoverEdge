@@ -26,6 +26,27 @@ export interface Scenario {
     size_m: { width: number; height: number };
   };
   default_run_request: RunRequest;
+  pixels_per_meter?: number;
+  source_version?: string | null;
+}
+
+export interface SceneDraft {
+  name: string;
+  width_m: number;
+  height_m: number;
+  pixels_per_meter: number;
+  dock_pose: Pose;
+  obstacles: Scenario["obstacles"];
+  targets: Array<{
+    object_id: string;
+    label: "Red toolbox" | "Blue barrel";
+    x_min_m: number;
+    y_min_m: number;
+    x_max_m: number;
+    y_max_m: number;
+    color_rgb: [number, number, number];
+  }>;
+  source_version: string | null;
 }
 
 export interface RunRequest {
@@ -218,6 +239,8 @@ export interface RunResult {
 
 export interface RoverEdgeApi {
   getScenarios(): Promise<Scenario[]>;
+  getSceneDraft?(scenarioVersion: string): Promise<SceneDraft>;
+  saveSceneVersion?(draft: SceneDraft): Promise<Scenario>;
   getAccelerateComparison?(): Promise<AccelerateComparison>;
   run(request: RunRequest): Promise<RunResult>;
 }
@@ -241,6 +264,12 @@ export const httpApi: RoverEdgeApi = {
   },
   async getAccelerateComparison() {
     return requestJson<AccelerateComparison>("/api/native-comparisons/accelerate");
+  },
+  async getSceneDraft(scenarioVersion) {
+    return requestJson<SceneDraft>(`/api/scenarios/${scenarioVersion}/draft`);
+  },
+  async saveSceneVersion(draft) {
+    return requestJson<Scenario>("/api/scene-versions", draft);
   },
   async run(request) {
     return requestJson<RunResult>("/api/runs", request);
@@ -267,6 +296,14 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     populateExperimentForm(root, scenario.default_run_request);
   };
   showScenario();
+  if (!api.getSceneDraft || !api.saveSceneVersion) {
+    root.querySelectorAll<HTMLInputElement | HTMLSelectElement>("[data-editor]").forEach(
+      (input) => (input.disabled = true),
+    );
+    root.querySelectorAll<HTMLButtonElement>("[data-scene-action]").forEach(
+      (button) => (button.disabled = true),
+    );
+  }
   if (api.getAccelerateComparison) {
     const comparison = await api.getAccelerateComparison();
     const recorded = comparison.recorded_result;
@@ -618,6 +655,219 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     scenario = scenarios.find((item) => item.scenario_version === selector.value)!;
     showScenario();
   });
+  const editor = (name: string): HTMLInputElement | HTMLSelectElement =>
+    root.querySelector(`[data-editor='${name}']`)!;
+  const setEditor = (name: string, value: string | number): void => {
+    editor(name).value = String(value);
+  };
+  const loadDraft = async (empty: boolean): Promise<void> => {
+    if (!api.getSceneDraft) return;
+    const draft: SceneDraft = empty
+      ? {
+          name: "Untitled inspection scene",
+          width_m: 8,
+          height_m: 6,
+          pixels_per_meter: 100,
+          dock_pose: { x_m: 1, y_m: 3, heading_rad: 0 },
+          obstacles: [],
+          targets: [],
+          source_version: null,
+        }
+      : await api.getSceneDraft(scenario.scenario_version);
+    setEditor("name", draft.name);
+    setEditor("scale", draft.pixels_per_meter);
+    setEditor("dock-x", draft.dock_pose.x_m);
+    setEditor("dock-y", draft.dock_pose.y_m);
+    setEditor(
+      "obstacle",
+      draft.obstacles
+        .map((item) => `${item.x_min_m},${item.y_min_m},${item.x_max_m},${item.y_max_m}`)
+        .join("; "),
+    );
+    setEditor(
+      "target",
+      draft.targets
+        .map(
+          (item) =>
+            `${item.label}:${item.x_min_m},${item.y_min_m},${item.x_max_m},${item.y_max_m}`,
+        )
+        .join("; "),
+    );
+    const target = draft.targets[0];
+    setEditor("target-label", target?.label ?? "Red toolbox");
+    root.querySelector<HTMLElement>("[data-field='scene-editor']")!.dataset.sourceVersion =
+      draft.source_version ?? "";
+    setText(
+      root,
+      "scene-validation",
+      empty ? "Empty draft ready for editing." : "Preset geometry loaded for editing.",
+    );
+  };
+  const parseRectangle = (value: string, label: string): [number, number, number, number] => {
+    const values = value.split(",").map((part) => Number(part.trim()));
+    if (values.length !== 4 || values.some((item) => !Number.isFinite(item))) {
+      throw new Error(`${label} must contain x min, y min, x max, y max`);
+    }
+    return values as [number, number, number, number];
+  };
+  const parseRectangles = (
+    value: string,
+    label: string,
+  ): Array<[number, number, number, number]> =>
+    value
+      .split(";")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => parseRectangle(item, label));
+  const parseTargetEntries = (
+    value: string,
+  ): Array<{
+    label: "Red toolbox" | "Blue barrel";
+    footprint: [number, number, number, number];
+  }> =>
+    value
+      .split(";")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => {
+        const separator = item.indexOf(":");
+        const rawLabel = separator >= 0 ? item.slice(0, separator).trim() : editor("target-label").value;
+        if (rawLabel !== "Red toolbox" && rawLabel !== "Blue barrel") {
+          throw new Error(`Target label must be Red toolbox or Blue barrel: ${rawLabel}`);
+        }
+        return {
+          label: rawLabel,
+          footprint: parseRectangle(separator >= 0 ? item.slice(separator + 1) : item, "Each target"),
+        };
+      });
+  const drawEditorPreview = (): void => {
+    const canvas = root.querySelector<HTMLCanvasElement>("[data-field='scene-preview']")!;
+    const pixelsPerMeter = Number(editor("scale").value);
+    canvas.width = Math.round(8 * pixelsPerMeter);
+    canvas.height = Math.round(6 * pixelsPerMeter);
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#eef2ef";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const drawFootprints = (value: string, color: string): void => {
+      for (const [xMin, yMin, xMax, yMax] of parseRectangles(value, "Footprint")) {
+        context.fillStyle = color;
+        context.fillRect(
+          xMin * pixelsPerMeter,
+          yMin * pixelsPerMeter,
+          (xMax - xMin) * pixelsPerMeter,
+          (yMax - yMin) * pixelsPerMeter,
+        );
+      }
+    };
+    drawFootprints(editor("obstacle").value, "#5b6560");
+    for (const target of parseTargetEntries(editor("target").value)) {
+      const [xMin, yMin, xMax, yMax] = target.footprint;
+      context.fillStyle = target.label === "Red toolbox" ? "#c4362d" : "#2a5ca8";
+      context.fillRect(
+        xMin * pixelsPerMeter,
+        yMin * pixelsPerMeter,
+        (xMax - xMin) * pixelsPerMeter,
+        (yMax - yMin) * pixelsPerMeter,
+      );
+    }
+    context.fillStyle = "#233a32";
+    context.beginPath();
+    context.arc(
+      Number(editor("dock-x").value) * pixelsPerMeter,
+      Number(editor("dock-y").value) * pixelsPerMeter,
+      12,
+      0,
+      Math.PI * 2,
+    );
+    context.fill();
+    setText(root, "scene-preview-scale", `${editor("scale").value} px/m declared scale`);
+  };
+  root
+    .querySelector("[data-scene-action='preset']")!
+    .addEventListener("click", () => {
+      void loadDraft(false)
+        .then(drawEditorPreview)
+        .catch((error) =>
+          setText(root, "scene-validation", error instanceof Error ? error.message : String(error)),
+        );
+    });
+  root
+    .querySelector("[data-scene-action='empty']")!
+    .addEventListener("click", () => {
+      void loadDraft(true).then(drawEditorPreview);
+    });
+  root.querySelectorAll("[data-editor]").forEach((input) => {
+    input.addEventListener("input", () => {
+      try {
+        drawEditorPreview();
+      } catch (error) {
+        setText(root, "scene-validation", error instanceof Error ? error.message : String(error));
+      }
+    });
+  });
+  root.querySelector("[data-scene-action='save']")!.addEventListener("click", async () => {
+    if (!api.saveSceneVersion) return;
+    try {
+      const obstacleText = editor("obstacle").value.trim();
+      const targetText = editor("target").value.trim();
+      const obstacles = obstacleText
+        ? parseRectangles(obstacleText, "Each obstacle").map(
+            ([x_min_m, y_min_m, x_max_m, y_max_m], index) => ({
+              obstacle_id: `edited-obstacle-${index + 1}`,
+              x_min_m,
+              y_min_m,
+              x_max_m,
+              y_max_m,
+            }),
+          )
+        : [];
+      const targets = targetText
+        ? parseTargetEntries(targetText).map(
+            ({ label, footprint: [x_min_m, y_min_m, x_max_m, y_max_m] }, index) => ({
+              object_id: `edited-target-${index + 1}`,
+              label,
+              x_min_m,
+              y_min_m,
+              x_max_m,
+              y_max_m,
+              color_rgb: (label === "Red toolbox"
+                ? [196, 54, 45]
+                : [42, 92, 168]) as [number, number, number],
+            }),
+          )
+        : [];
+      const saved = await api.saveSceneVersion({
+        name: editor("name").value,
+        width_m: 8,
+        height_m: 6,
+        pixels_per_meter: Number(editor("scale").value),
+        dock_pose: {
+          x_m: Number(editor("dock-x").value),
+          y_m: Number(editor("dock-y").value),
+          heading_rad: 0,
+        },
+        obstacles,
+        targets,
+        source_version: root.querySelector<HTMLElement>("[data-field='scene-editor']")!.dataset.sourceVersion || null,
+      });
+      scenarios.push(saved);
+      selector.add(new Option(saved.name, saved.scenario_version));
+      selector.value = saved.scenario_version;
+      scenario = saved;
+      showScenario();
+      const groundingPhrase = saved.target.label.toLowerCase();
+      const groundingSlug = groundingPhrase.replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+      setText(
+        root,
+        "scene-validation",
+        `Confirmed and saved immutable version ${saved.scenario_version}. To ground this exact render, manually authorize one call: uv run python scripts/smoke_sam.py --scenario ${saved.scenario_version} --phrase "${groundingPhrase}" --output .roveredge/grounding/${saved.scenario_version}--${groundingSlug}.json --confirm-live-provider-call`,
+      );
+    } catch (error) {
+      setText(root, "scene-validation", error instanceof Error ? error.message : String(error));
+    }
+  });
   root
     .querySelector("[data-action='timeout']")!
     .addEventListener("click", () =>
@@ -647,7 +897,7 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   });
 }
 
-async function requestJson<T>(path: string, body?: RunRequest): Promise<T> {
+async function requestJson<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {
     method: body ? "POST" : "GET",
     headers: body ? { "Content-Type": "application/json" } : undefined,
@@ -1086,6 +1336,26 @@ function applicationMarkup(): string {
       <p data-field="scenario">Loading preset…</p>
       <p>Target: <strong data-field="target">—</strong></p>
       <label>Scenario <select data-action="scenario" aria-label="Scenario"></select></label>
+      <section data-field="scene-editor" class="scene-editor">
+        <h2>Scene editor</h2>
+        <div class="controls">
+          <button data-scene-action="preset">Edit selected preset</button>
+          <button data-scene-action="empty">Start empty</button>
+          <label>Name <input data-editor="name" value="Untitled inspection scene"></label>
+          <label>Scale (px/m) <input data-editor="scale" type="number" min="20" max="400" value="100"></label>
+          <label>Dock X <input data-editor="dock-x" type="number" step="0.1" value="1"></label>
+          <label>Dock Y <input data-editor="dock-y" type="number" step="0.1" value="3"></label>
+          <label>Obstacle footprints <input data-editor="obstacle" placeholder="x min, y min, x max, y max; …"></label>
+          <label>Target footprints <input data-editor="target" placeholder="Red toolbox:x min, y min, x max, y max; Blue barrel:…"></label>
+          <label>Target <select data-editor="target-label"><option>Red toolbox</option><option>Blue barrel</option></select></label>
+          <button data-scene-action="save">Confirm and save new version</button>
+        </div>
+        <p data-field="scene-validation">Load a preset or start empty. Saving validates geometry and creates a new immutable version.</p>
+        <figure>
+          <canvas data-field="scene-preview" width="800" height="600" aria-label="Editable top-down scene confirmation preview"></canvas>
+          <figcaption data-field="scene-preview-scale">100 px/m declared scale</figcaption>
+        </figure>
+      </section>
       <div class="actions">
         <button data-action="start">Start run</button>
         <button data-action="learned">Run learned controller</button>
