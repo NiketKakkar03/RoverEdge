@@ -59,7 +59,7 @@ const scenario: Scenario = {
   },
   default_run_request: {
     scenario_version: "preset-open-v1",
-    target_id: "preset-storage-container",
+    target: { kind: "known_target_fixture", target_id: "preset-storage-container" },
     simulation_seed: 20261027,
     configuration,
     expected_mission_outcome: "completed",
@@ -81,7 +81,7 @@ const result: RunResult = {
   run_id: "run-browser-test",
   request: {
     scenario_version: "preset-open-v1",
-    target_id: "preset-storage-container",
+    target: { kind: "known_target_fixture", target_id: "preset-storage-container" },
     simulation_seed: 20261027,
     configuration,
     expected_mission_outcome: "completed",
@@ -271,6 +271,76 @@ describe("mission replay application", () => {
     await waitFor(() => expect(run).toHaveBeenCalledWith(narrow.default_run_request));
     expect(root.querySelector("[data-field='scenario']")?.textContent).toContain(
       "preset-narrow-v1",
+    );
+  });
+
+  test("submits a recorded visual target and displays grounding provenance", async () => {
+    const groundedResult: RunResult = {
+      ...result,
+      request: {
+        ...result.request,
+        target: {
+          kind: "visual_target",
+          phrase: "red toolbox",
+          grounding_source: "recorded",
+        },
+      },
+      grounding_evidence: {
+        source: "recorded",
+        status: "matched",
+        provider: "meta-model-api",
+        model: "sam-3.1",
+        parser_version: "meta-sam-parser-0.1.0",
+        target_phrase: "red toolbox",
+        render_sha256: "abcdef0123456789",
+        render_width_px: 800,
+        render_height_px: 600,
+        duration_s: 0.2,
+        raw_output_sha256: "1234567890abcdef",
+        selected_match_ordinal: 0,
+        diagnostics: [],
+        matches: [
+          {
+            ordinal: 0,
+            box_px: [583, 250, 718, 354],
+            confidence: 0.95,
+            mask: {
+              width_px: 800,
+              height_px: 600,
+              counts: [480000],
+              encoding: "row_major_rle_v1",
+            },
+          },
+        ],
+      },
+    };
+    const run = vi.fn(async () => groundedResult);
+    const api: RoverEdgeApi = { getScenarios: async () => [scenario], run };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector("[data-action='grounded-recorded']")!);
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith({
+        ...scenario.default_run_request,
+        target: {
+          kind: "visual_target",
+          phrase: "red toolbox",
+          grounding_source: "recorded",
+        },
+      }),
+    );
+    expect(root.querySelector("[data-field='grounding']")?.textContent).toContain(
+      "recorded · matched · sam-3.1",
+    );
+    const preview = root.querySelector<HTMLElement>("[data-field='grounding-preview']")!;
+    expect(preview.hidden).toBe(false);
+    expect(preview.dataset.renderSha256).toBe("abcdef0123456789");
+    expect(preview.querySelector("figcaption")?.textContent).toContain(
+      "recorded sam-3.1 mask over render abcdef0123456789",
     );
   });
 

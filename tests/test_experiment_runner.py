@@ -3,6 +3,7 @@ from dataclasses import replace
 import pytest
 
 from roveredge import preset_run_request, run_experiment, timeout_run_request
+from roveredge.models import KnownTargetFixture
 
 
 def test_preset_mission_completes_inspection_and_return() -> None:
@@ -75,7 +76,6 @@ def test_repeated_run_reproduces_canonical_evidence() -> None:
     ("field", "unsupported_value"),
     [
         ("scenario_version", "another-scenario-v1"),
-        ("target_id", "another-target"),
     ],
 )
 def test_runner_rejects_identifiers_without_matching_geometry(
@@ -83,6 +83,16 @@ def test_runner_rejects_identifiers_without_matching_geometry(
     unsupported_value: str,
 ) -> None:
     request = replace(preset_run_request(), **{field: unsupported_value})
+
+    with pytest.raises(ValueError, match="unsupported"):
+        run_experiment(request)
+
+
+def test_runner_rejects_target_without_matching_geometry() -> None:
+    request = replace(
+        preset_run_request(),
+        target=KnownTargetFixture(kind="known_target_fixture", target_id="another-target"),
+    )
 
     with pytest.raises(ValueError, match="unsupported"):
         run_experiment(request)

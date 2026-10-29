@@ -215,6 +215,28 @@ Planned TDD slices:
 7. Capture the successful live responses as labeled immutable fixtures; repeat the default suite
    offline and prove replay determinism.
 
+## Live validation results (2026-10-29)
+
+The user manually authorized and ran each provider call. Automated tests and the browser never call
+the provider. The validated stack is `sam-3.1`, `openai==3.41.0`, and
+`meta-sam-parser==0.1.0` with one-bit masks.
+
+| Scenario | Phrase | Result | Matches | Render SHA-256 |
+| --- | --- | --- | ---: | --- |
+| `preset-perception-v1` | `red toolbox` | `matched` | 1 | `d52abfeb4b2247bc4ad2529b705f99ef3f87f7500073c825226a941ffdb511c9` |
+| `preset-perception-v1` | `blue barrel` | `matched` | 1 | `d52abfeb4b2247bc4ad2529b705f99ef3f87f7500073c825226a941ffdb511c9` |
+| `fixture-perception-shifted-v1` | `red toolbox` | `matched` | 1 | `27ea0c352dd13823ba04c82228cd8dbf6751111b0622c57c8eee97597195fcbc` |
+| `fixture-perception-shifted-v1` | `blue barrel` | `matched` | 1 | `27ea0c352dd13823ba04c82228cd8dbf6751111b0622c57c8eee97597195fcbc` |
+| `fixture-perception-absent-v1` | `red toolbox` | `target_not_found` | 0 | `71c830cad0df5d504aab0dcdce043897665a97a20ad066d07a20952b756bcb81` |
+| `fixture-perception-ambiguous-v1` | `red toolbox` | `target_ambiguous` | 2 | `31c2d25b607d20992f87c30a40904d30a1949b6c75c73358fb12f573194c1254` |
+
+The successful base and shifted captures replayed offline through mask-to-floor conversion,
+collision-free standoff selection, inspection, and return-to-dock. The shifted poses differed for
+both validated categories. The absent and ambiguous captures terminated at `setup_failed` with no
+motion or observations. The first schematic red-toolbox render returned zero matches; that sanitized
+failure is retained under `artifacts/issue-4/live-failures/`. Replacing the schematic objects with
+recognizable fixed assets produced the successful results above.
+
 Demonstration:
 
 ```text

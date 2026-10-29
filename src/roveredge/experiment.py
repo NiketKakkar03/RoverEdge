@@ -1,10 +1,12 @@
 import math
 import uuid
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 from .models import (
     EventKind,
     InspectionObservation,
+    KnownTargetFixture,
     MissionOutcome,
     MissionPhase,
     Pose,
@@ -13,7 +15,11 @@ from .models import (
     RunResult,
     TestVerdict,
     TraceEvent,
+    VisualTarget,
 )
+
+if TYPE_CHECKING:
+    from .grounding import GroundingAdapter
 
 START_AND_DOCK = Pose(1.0, 3.0, 0.0)
 INSPECTION_POSE = Pose(5.5, 3.0, 0.0)
@@ -24,7 +30,7 @@ PRESET_TARGET_ID = "preset-storage-container"
 def preset_run_request() -> RunRequest:
     return RunRequest(
         scenario_version=PRESET_SCENARIO_VERSION,
-        target_id=PRESET_TARGET_ID,
+        target=KnownTargetFixture(kind="known_target_fixture", target_id=PRESET_TARGET_ID),
         simulation_seed=20261027,
         configuration=RunConfiguration(),
         expected_mission_outcome="completed",
@@ -40,9 +46,17 @@ def timeout_run_request() -> RunRequest:
     )
 
 
-def run_experiment(request: RunRequest) -> RunResult:
+def run_experiment(
+    request: RunRequest, grounding_adapter: "GroundingAdapter | None" = None
+) -> RunResult:
+    if isinstance(request.target, VisualTarget):
+        return _run_grounded_experiment(request, request.target, grounding_adapter)
     if request.scenario_version in {
         "preset-open-v2",
+        "preset-perception-v1",
+        "fixture-perception-shifted-v1",
+        "fixture-perception-absent-v1",
+        "fixture-perception-ambiguous-v1",
         "preset-narrow-v1",
         "preset-cluttered-v1",
         "fixture-unreachable-v1",
@@ -53,8 +67,10 @@ def run_experiment(request: RunRequest) -> RunResult:
         return run_physical_experiment(request)
     if request.scenario_version != PRESET_SCENARIO_VERSION:
         raise ValueError(f"unsupported scenario version: {request.scenario_version}")
-    if request.target_id != PRESET_TARGET_ID:
-        raise ValueError(f"unsupported target: {request.target_id}")
+    if not isinstance(request.target, KnownTargetFixture):
+        raise ValueError("visual target grounding is unsupported for this legacy scenario")
+    if request.target.target_id != PRESET_TARGET_ID:
+        raise ValueError(f"unsupported target: {request.target.target_id}")
 
     pose = START_AND_DOCK
     phase: MissionPhase = "approaching_target"
@@ -134,7 +150,7 @@ def run_experiment(request: RunRequest) -> RunResult:
             assert dwell_started_s is not None
             if simulated_time_s - dwell_started_s >= request.configuration.inspection.dwell_s:
                 observation = InspectionObservation(
-                    target_id=request.target_id,
+                    target_id=request.target.target_id,
                     pose=pose,
                     simulated_time_s=round(simulated_time_s, 9),
                     completion_status="captured",
@@ -187,6 +203,74 @@ def run_experiment(request: RunRequest) -> RunResult:
         mission_outcome=outcome,
         test_verdict=verdict,
         terminal_reason=terminal_reason,
+    )
+
+
+def _run_grounded_experiment(
+    request: RunRequest,
+    visual_target: VisualTarget,
+    grounding_adapter: "GroundingAdapter | None",
+) -> RunResult:
+    from .grounding import validate_grounding_evidence
+    from .models import KnownTargetFixture, TraceEvent
+    from .physical import run_physical_experiment
+    from .scenarios import get_scenario
+    from .scene_rendering import render_scene
+    from .standoff import derive_grounded_scenario
+
+    if grounding_adapter is None:
+        raise ValueError("visual target requests require an explicit grounding adapter")
+    render = render_scene(request.scenario_version)
+    evidence = grounding_adapter.ground(render, visual_target.phrase)
+    validate_grounding_evidence(evidence, render, visual_target.phrase)
+    if evidence.source != visual_target.grounding_source:
+        raise ValueError("grounding evidence source does not match the requested source")
+    if evidence.status != "matched":
+        scenario = get_scenario(request.scenario_version)
+        terminal = TraceEvent(
+            sequence=0,
+            simulated_time_s=0.0,
+            phase="setup_failed",
+            kind="terminal",
+            pose=scenario.initial_pose,
+            linear_velocity_mps=0.0,
+            angular_velocity_radps=0.0,
+            detail=f"target grounding ended with {evidence.status}",
+        )
+        return RunResult(
+            run_id=str(uuid.uuid4()),
+            request=request,
+            trace=(terminal,),
+            observations=(),
+            mission_outcome=evidence.status,
+            test_verdict=(
+                "passed" if request.expected_mission_outcome == evidence.status else "failed"
+            ),
+            terminal_reason=f"target grounding ended with {evidence.status}",
+            grounding_evidence=evidence,
+        )
+    match = evidence.matches[0]
+    grounded_scenario, inspection_pose = derive_grounded_scenario(
+        get_scenario(request.scenario_version), render, match, request.configuration
+    )
+    grounded_id = f"grounded:{evidence.render_sha256[:12]}:{match.ordinal}"
+    physical_request = replace(
+        request,
+        target=KnownTargetFixture(kind="known_target_fixture", target_id=grounded_id),
+    )
+    result = run_physical_experiment(
+        physical_request,
+        scenario_override=grounded_scenario,
+        observation_target_id=grounded_id,
+    )
+    return replace(
+        result,
+        request=request,
+        grounding_evidence=replace(
+            evidence,
+            camera_transform=render.camera_transform,
+            derived_inspection_pose=inspection_pose,
+        ),
     )
 
 

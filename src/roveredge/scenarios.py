@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from .models import MissionOutcome, Pose, RunConfiguration, RunRequest
+from .models import KnownTargetFixture, MissionOutcome, Pose, RunConfiguration, RunRequest
 
 
 @dataclass(frozen=True)
@@ -10,6 +10,17 @@ class Obstacle:
     y_min_m: float
     x_max_m: float
     y_max_m: float
+
+
+@dataclass(frozen=True)
+class VisualObject:
+    object_id: str
+    label: str
+    x_min_m: float
+    y_min_m: float
+    x_max_m: float
+    y_max_m: float
+    color_rgb: tuple[int, int, int]
 
 
 @dataclass(frozen=True)
@@ -23,6 +34,7 @@ class Scenario:
     dock_pose: Pose
     inspection_pose: Pose
     obstacles: tuple[Obstacle, ...]
+    visual_objects: tuple[VisualObject, ...] = ()
 
 
 def _scenario(
@@ -30,6 +42,7 @@ def _scenario(
     name: str,
     obstacles: tuple[Obstacle, ...],
     initial_linear_velocity_mps: float = 0.0,
+    visual_objects: tuple[VisualObject, ...] = (),
 ) -> Scenario:
     return Scenario(
         scenario_version=scenario_version,
@@ -41,6 +54,7 @@ def _scenario(
         dock_pose=Pose(1.0, 3.0, 0.0),
         inspection_pose=Pose(5.5, 3.0, 0.0),
         obstacles=obstacles,
+        visual_objects=visual_objects,
     )
 
 
@@ -49,6 +63,73 @@ SCENARIOS = {
         scenario_version="preset-open-v2",
         name="Open inspection lane",
         obstacles=(),
+    ),
+    "preset-perception-v1": _scenario(
+        scenario_version="preset-perception-v1",
+        name="Perception feasibility room",
+        obstacles=(),
+        visual_objects=(
+            VisualObject(
+                "red-toolbox",
+                "Red toolbox",
+                5.8,
+                2.2,
+                7.2,
+                3.8,
+                (196, 54, 45),
+            ),
+            VisualObject(
+                "blue-barrel",
+                "Blue barrel",
+                3.8,
+                4.0,
+                5.2,
+                5.6,
+                (42, 92, 168),
+            ),
+        ),
+    ),
+    "fixture-perception-shifted-v1": _scenario(
+        scenario_version="fixture-perception-shifted-v1",
+        name="Shifted perception target fixture",
+        obstacles=(),
+        visual_objects=(
+            VisualObject(
+                "red-toolbox-shifted", "Red toolbox", 4.6, 0.8, 6.0, 2.4, (196, 54, 45)
+            ),
+            VisualObject(
+                "blue-barrel-shifted",
+                "Blue barrel",
+                2.4,
+                3.8,
+                3.8,
+                5.4,
+                (42, 92, 168),
+            ),
+        ),
+    ),
+    "fixture-perception-absent-v1": _scenario(
+        scenario_version="fixture-perception-absent-v1",
+        name="Absent perception target fixture",
+        obstacles=(),
+        visual_objects=(
+            VisualObject(
+                "blue-barrel", "Blue barrel", 3.8, 4.0, 5.2, 5.6, (42, 92, 168)
+            ),
+        ),
+    ),
+    "fixture-perception-ambiguous-v1": _scenario(
+        scenario_version="fixture-perception-ambiguous-v1",
+        name="Ambiguous perception target fixture",
+        obstacles=(),
+        visual_objects=(
+            VisualObject(
+                "red-toolbox-a", "Red toolbox", 5.3, 0.6, 6.7, 2.2, (196, 54, 45)
+            ),
+            VisualObject(
+                "red-toolbox-b", "Red toolbox", 5.3, 3.8, 6.7, 5.4, (196, 54, 45)
+            ),
+        ),
     ),
     "preset-narrow-v1": _scenario(
         scenario_version="preset-narrow-v1",
@@ -98,11 +179,17 @@ def physical_run_request(
             expected_mission_outcome = "unreachable"
         elif scenario_version == "fixture-collision-stop-v1":
             expected_mission_outcome = "collision"
+        elif scenario_version == "fixture-perception-absent-v1":
+            expected_mission_outcome = "target_not_found"
+        elif scenario_version == "fixture-perception-ambiguous-v1":
+            expected_mission_outcome = "target_ambiguous"
         else:
             expected_mission_outcome = "completed"
     return RunRequest(
         scenario_version=scenario_version,
-        target_id="preset-storage-container",
+        target=KnownTargetFixture(
+            kind="known_target_fixture", target_id="preset-storage-container"
+        ),
         simulation_seed=20261027,
         configuration=RunConfiguration(),
         expected_mission_outcome=expected_mission_outcome,

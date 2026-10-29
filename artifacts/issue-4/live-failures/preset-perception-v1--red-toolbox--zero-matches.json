@@ -1,0 +1,41 @@
+{
+  "request": {
+    "endpoint": "https://api.meta.ai/v1/responses",
+    "model": "sam-3.1",
+    "input": [
+      {
+        "role": "user",
+        "content_types": [
+          "input_text",
+          "input_image"
+        ]
+      }
+    ],
+    "target_phrase": "red toolbox",
+    "render_sha256": "74cb2b94e72388473ed4a15fbbb161c88b66bc3ac34c09137148d377858d3449",
+    "metadata": {
+      "mask_encoding": "one_bit",
+      "include_confidence": "true"
+    }
+  },
+  "evidence": {
+    "source": "live",
+    "status": "target_not_found",
+    "provider": "meta-model-api",
+    "model": "sam-3.1",
+    "parser_version": "meta-sam-parser-0.1.0",
+    "target_phrase": "red toolbox",
+    "render_sha256": "74cb2b94e72388473ed4a15fbbb161c88b66bc3ac34c09137148d377858d3449",
+    "render_width_px": 800,
+    "render_height_px": 600,
+    "duration_s": 2.847825250122696,
+    "raw_output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "matches": [],
+    "selected_match_ordinal": null,
+    "diagnostics": [],
+    "request_id": null,
+    "camera_transform": null,
+    "derived_inspection_pose": null
+  },
+  "sanitized_raw_output": ""
+}
