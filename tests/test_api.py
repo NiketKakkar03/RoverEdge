@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from roveredge import physical_run_request, preset_run_request
 from roveredge.api import app
+from roveredge.models import VisualTarget
 from roveredge.native import accelerate_available
 
 
@@ -66,12 +67,16 @@ def test_browser_api_lists_versioned_physical_scenarios_with_geometry() -> None:
     scenarios = response.json()
     assert [scenario["scenario_version"] for scenario in scenarios] == [
         "preset-open-v2",
+        "preset-perception-v1",
+        "fixture-perception-shifted-v1",
+        "fixture-perception-absent-v1",
+        "fixture-perception-ambiguous-v1",
         "preset-narrow-v1",
         "preset-cluttered-v1",
         "fixture-unreachable-v1",
         "fixture-collision-stop-v1",
     ]
-    narrow = scenarios[1]
+    narrow = scenarios[5]
     assert narrow["obstacles"][0] == {
         "obstacle_id": "upper-block",
         "x_min_m": 2.5,
@@ -80,6 +85,23 @@ def test_browser_api_lists_versioned_physical_scenarios_with_geometry() -> None:
         "y_max_m": 5.5,
     }
     assert narrow["default_run_request"] == asdict(physical_run_request("preset-narrow-v1"))
+    assert scenarios[3]["default_run_request"]["expected_mission_outcome"] == "target_not_found"
+    assert scenarios[4]["default_run_request"]["expected_mission_outcome"] == "target_ambiguous"
+
+
+def test_browser_api_serves_the_exact_deterministic_perception_render() -> None:
+    client = TestClient(app)
+
+    first = client.get("/api/scenarios/preset-perception-v1/render")
+    second = client.get("/api/scenarios/preset-perception-v1/render")
+
+    assert first.status_code == 200
+    assert first.headers["content-type"] == "image/png"
+    assert first.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert first.content == second.content
+    assert first.headers["x-roveredge-render-sha256"] == second.headers[
+        "x-roveredge-render-sha256"
+    ]
 
 
 def test_browser_api_labels_recorded_accelerate_evidence_and_local_availability() -> None:
@@ -149,3 +171,37 @@ def test_browser_api_explicitly_rejects_unsupported_worker_combination() -> None
 
     assert response.status_code == 422
     assert "only parallel blocked inference" in str(response.json())
+
+
+def test_browser_api_never_invokes_live_meta_grounding() -> None:
+    client = TestClient(app)
+    request = asdict(physical_run_request("preset-perception-v1"))
+    request["target"] = asdict(
+        VisualTarget(
+            kind="visual_target", phrase="red toolbox", grounding_source="live"
+        )
+    )
+
+    response = client.post("/api/runs", json=request)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "live Meta grounding is manual-only; use the guarded smoke command"
+    )
+
+
+def test_browser_api_requires_captured_recorded_grounding_evidence() -> None:
+    client = TestClient(app)
+    request = asdict(physical_run_request("preset-perception-v1"))
+    request["target"] = asdict(
+        VisualTarget(
+            kind="visual_target", phrase="not captured", grounding_source="recorded"
+        )
+    )
+
+    response = client.post("/api/runs", json=request)
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "recorded grounding evidence is unavailable for this request"
+    )

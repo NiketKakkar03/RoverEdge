@@ -24,6 +24,7 @@ from .learning import (
 from .models import (
     EventKind,
     InspectionObservation,
+    KnownTargetFixture,
     MissionOutcome,
     MissionPhase,
     Point,
@@ -45,9 +46,17 @@ def physical_open_run_request() -> RunRequest:
     return physical_run_request("preset-open-v2")
 
 
-def run_physical_experiment(request: RunRequest) -> RunResult:
-    if request.target_id != "preset-storage-container":
-        raise ValueError(f"unsupported target: {request.target_id}")
+def run_physical_experiment(
+    request: RunRequest,
+    *,
+    scenario_override: Scenario | None = None,
+    observation_target_id: str | None = None,
+) -> RunResult:
+    if not isinstance(request.target, KnownTargetFixture):
+        raise ValueError("visual target must be grounded before physical execution")
+    target_id = request.target.target_id
+    if scenario_override is None and target_id != "preset-storage-container":
+        raise ValueError(f"unsupported target: {target_id}")
 
     configuration = request.configuration
     risk_model = (
@@ -90,7 +99,7 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
         if risk_model is not None and configuration.execution_mode == "virtual_fifo"
         else None
     )
-    scenario = get_scenario(request.scenario_version)
+    scenario = scenario_override or get_scenario(request.scenario_version)
     inflation = configuration.rover_radius_m + configuration.planning_clearance_m
     outbound_route = plan_route(
         scenario,
@@ -372,7 +381,7 @@ def run_physical_experiment(request: RunRequest) -> RunResult:
             if simulated_time - dwell_started_at >= configuration.inspection.dwell_s:
                 observations.append(
                     InspectionObservation(
-                        target_id=request.target_id,
+                        target_id=observation_target_id or target_id,
                         pose=_rounded_pose(pose),
                         simulated_time_s=round(simulated_time, 9),
                         completion_status="captured",

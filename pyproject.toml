@@ -9,7 +9,10 @@ description = "Deterministic rover mission experiments"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.162.0",
+    "meta-sam-parser==0.1.0",
     "numpy>=2.5.4",
+    "openai==3.41.0",
+    "pillow==13.0.0",
     "torch>=2.15.0",
     "uvicorn>=0.54.0",
 ]

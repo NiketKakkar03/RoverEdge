@@ -4,7 +4,15 @@ from typing import Literal
 
 from .device import ModeledDeviceProfile
 
-MissionOutcome = Literal["completed", "timed_out", "collision", "unreachable"]
+MissionOutcome = Literal[
+    "completed",
+    "timed_out",
+    "collision",
+    "unreachable",
+    "target_not_found",
+    "target_ambiguous",
+    "provider_unavailable",
+]
 TestVerdict = Literal["passed", "failed"]
 FailureCode = Literal["collision", "unreachable", "timeout"]
 EventKind = Literal[
@@ -41,6 +49,7 @@ MissionPhase = Literal[
     "timed_out",
     "collision",
     "unreachable",
+    "setup_failed",
 ]
 
 
@@ -160,9 +169,10 @@ class RunConfiguration:
             raise ValueError("pacing overrun limit cannot be negative")
         if self.inference_workers <= 0:
             raise ValueError("inference workers must be positive")
-        if (
-            self.inference_backend == "native-parallel-blocked"
-            and self.inference_workers not in (1, 2, 4)
+        if self.inference_backend == "native-parallel-blocked" and self.inference_workers not in (
+            1,
+            2,
+            4,
         ):
             raise ValueError("parallel blocked inference supports 1, 2, or 4 workers")
         if self.inference_backend != "native-parallel-blocked" and self.inference_workers != 1:
@@ -178,9 +188,32 @@ class RunConfiguration:
 
 
 @dataclass(frozen=True)
+class KnownTargetFixture:
+    kind: Literal["known_target_fixture"]
+    target_id: str
+
+
+@dataclass(frozen=True)
+class VisualTarget:
+    kind: Literal["visual_target"]
+    phrase: str
+    grounding_source: Literal["live", "recorded"]
+
+    def __post_init__(self) -> None:
+        phrase = self.phrase.strip()
+        if not phrase or len(phrase) > 120:
+            raise ValueError("visual target phrase must contain 1 to 120 characters")
+        if phrase != self.phrase:
+            raise ValueError("visual target phrase cannot have surrounding whitespace")
+
+
+TargetRequest = KnownTargetFixture | VisualTarget
+
+
+@dataclass(frozen=True)
 class RunRequest:
     scenario_version: str
-    target_id: str
+    target: TargetRequest
     simulation_seed: int
     configuration: RunConfiguration
     expected_mission_outcome: MissionOutcome
@@ -253,6 +286,43 @@ class ConfigurationValidity:
 
 
 @dataclass(frozen=True)
+class GroundingMask:
+    width_px: int
+    height_px: int
+    counts: tuple[int, ...]
+    encoding: Literal["row_major_rle_v1"] = "row_major_rle_v1"
+
+
+@dataclass(frozen=True)
+class GroundingMatch:
+    ordinal: int
+    box_px: tuple[int, int, int, int]
+    mask: GroundingMask
+    confidence: float | None = None
+
+
+@dataclass(frozen=True)
+class GroundingEvidence:
+    source: Literal["live", "recorded"]
+    status: Literal["matched", "target_not_found", "target_ambiguous", "provider_unavailable"]
+    provider: str
+    model: str
+    parser_version: str
+    target_phrase: str
+    render_sha256: str
+    render_width_px: int
+    render_height_px: int
+    duration_s: float
+    raw_output_sha256: str
+    matches: tuple[GroundingMatch, ...]
+    selected_match_ordinal: int | None = None
+    diagnostics: tuple[str, ...] = ()
+    request_id: str | None = None
+    camera_transform: tuple[float, float, float, float, float, float] | None = None
+    derived_inspection_pose: Pose | None = None
+
+
+@dataclass(frozen=True)
 class RunResult:
     run_id: str
     request: RunRequest
@@ -273,3 +343,4 @@ class RunResult:
     command_disagreements: int | None = None
     inference_summary: dict[str, int | float | str] | None = None
     configuration_validity: ConfigurationValidity | None = None
+    grounding_evidence: GroundingEvidence | None = None

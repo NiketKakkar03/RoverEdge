@@ -1,14 +1,17 @@
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
 
 from .experiment import preset_run_request, run_experiment
-from .models import RunRequest, RunResult
+from .grounding import RecordedGroundingAdapter
+from .models import RunRequest, RunResult, VisualTarget
 from .native import accelerate_available
 from .scenarios import SCENARIOS, Scenario, physical_run_request
+from .scene_rendering import render_scene
 
 app = FastAPI(title="RoverEdge", version="0.1.0")
 
@@ -67,9 +70,36 @@ def get_accelerate_comparison() -> dict[str, object]:
     }
 
 
+@app.get("/api/scenarios/{scenario_version}/render")
+def get_scenario_render(scenario_version: str) -> Response:
+    try:
+        render = render_scene(scenario_version)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return Response(
+        render.png_bytes,
+        media_type="image/png",
+        headers={"X-RoverEdge-Render-SHA256": render.sha256},
+    )
+
+
 @app.post("/api/runs")
 def create_run(request: RunRequest) -> RunResult:
     try:
+        if isinstance(request.target, VisualTarget):
+            if request.target.grounding_source == "live":
+                raise ValueError(
+                    "live Meta grounding is manual-only; use the guarded smoke command"
+                )
+            phrase_slug = re.sub(r"[^a-z0-9]+", "-", request.target.phrase.lower()).strip("-")
+            evidence_path = (
+                Path(__file__).resolve().parents[2]
+                / "artifacts"
+                / "issue-4"
+                / "recorded"
+                / f"{request.scenario_version}--{phrase_slug}.json"
+            )
+            return run_experiment(request, RecordedGroundingAdapter.from_file(evidence_path))
         return run_experiment(request)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

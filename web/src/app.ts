@@ -30,7 +30,9 @@ export interface Scenario {
 
 export interface RunRequest {
   scenario_version: string;
-  target_id: string;
+  target:
+    | { kind: "known_target_fixture"; target_id: string }
+    | { kind: "visual_target"; phrase: string; grounding_source: "live" | "recorded" };
   simulation_seed: number;
   configuration: {
     simulation_step_s: number;
@@ -82,7 +84,14 @@ export interface RunRequest {
       memory_budget_bytes: number;
     };
   };
-  expected_mission_outcome: "completed" | "timed_out" | "collision" | "unreachable";
+  expected_mission_outcome:
+    | "completed"
+    | "timed_out"
+    | "collision"
+    | "unreachable"
+    | "target_not_found"
+    | "target_ambiguous"
+    | "provider_unavailable";
 }
 
 interface TraceEvent extends ReplayEvent {
@@ -139,9 +148,42 @@ export interface RunResult {
     simulated_time_s: number;
     completion_status: "captured";
   }>;
-  mission_outcome: "completed" | "timed_out" | "collision" | "unreachable";
+  mission_outcome:
+    | "completed"
+    | "timed_out"
+    | "collision"
+    | "unreachable"
+    | "target_not_found"
+    | "target_ambiguous"
+    | "provider_unavailable";
   test_verdict: "passed" | "failed";
   terminal_reason: string;
+  grounding_evidence?: {
+    source: "live" | "recorded";
+    status: "matched" | "target_not_found" | "target_ambiguous" | "provider_unavailable";
+    provider: string;
+    model: string;
+    parser_version: string;
+    target_phrase: string;
+    render_sha256: string;
+    render_width_px: number;
+    render_height_px: number;
+    duration_s: number;
+    raw_output_sha256: string;
+    selected_match_ordinal?: number | null;
+    diagnostics: string[];
+    matches: Array<{
+      ordinal: number;
+      box_px: [number, number, number, number];
+      confidence?: number | null;
+      mask: {
+        width_px: number;
+        height_px: number;
+        counts: number[];
+        encoding: "row_major_rle_v1";
+      };
+    }>;
+  } | null;
   planned_routes: Pose[][];
   controller_kind?: "geometric" | "learned_collision_risk";
   model_version?: string | null;
@@ -382,6 +424,14 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     setText(root, "configuration", formatConfiguration(result.request));
     setText(root, "outcome", result.mission_outcome);
     setText(root, "verdict", result.test_verdict);
+    setText(
+      root,
+      "grounding",
+      result.grounding_evidence
+        ? `${result.grounding_evidence.source} · ${result.grounding_evidence.status} · ${result.grounding_evidence.model} · phrase “${result.grounding_evidence.target_phrase}” · render ${result.grounding_evidence.render_sha256.slice(0, 12)}…`
+        : "Not used",
+    );
+    showGroundingEvidence(root, result);
     setText(root, "controller", result.controller_kind ?? result.request.configuration.controller_kind);
     setText(
       root,
@@ -442,6 +492,19 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   root
     .querySelector("[data-action='start']")!
     .addEventListener("click", () => void run(() => api.run(scenario.default_run_request)));
+  root
+    .querySelector("[data-action='grounded-recorded']")!
+    .addEventListener("click", () => {
+      const phrase = root
+        .querySelector<HTMLInputElement>("[data-action='target-phrase']")!
+        .value.trim();
+      void run(() =>
+        api.run({
+          ...scenario.default_run_request,
+          target: { kind: "visual_target", phrase, grounding_source: "recorded" },
+        }),
+      );
+    });
   root
     .querySelector("[data-action='learned']")!
     .addEventListener("click", () =>
@@ -966,6 +1029,55 @@ function drawScene(
   }
 }
 
+function showGroundingEvidence(root: HTMLElement, result: RunResult): void {
+  const figure = root.querySelector<HTMLElement>("[data-field='grounding-preview']")!;
+  const evidence = result.grounding_evidence;
+  if (!evidence || evidence.matches.length === 0) {
+    figure.hidden = true;
+    return;
+  }
+  figure.hidden = false;
+  figure.dataset.renderSha256 = evidence.render_sha256;
+  figure.querySelector<HTMLElement>("figcaption")!.textContent =
+    `${evidence.source} ${evidence.model} mask over render ${evidence.render_sha256}`;
+  if (typeof Image === "undefined") return;
+  const canvas = figure.querySelector<HTMLCanvasElement>("canvas")!;
+  canvas.width = evidence.render_width_px;
+  canvas.height = evidence.render_height_px;
+  const image = new Image();
+  image.addEventListener("load", () => {
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const overlayCanvas = document.createElement("canvas");
+    overlayCanvas.width = canvas.width;
+    overlayCanvas.height = canvas.height;
+    const overlayContext = overlayCanvas.getContext("2d");
+    if (!overlayContext) return;
+    const overlay = overlayContext.createImageData(canvas.width, canvas.height);
+    for (const match of evidence.matches) {
+      let pixel = 0;
+      let value = 0;
+      for (const run of match.mask.counts) {
+        if (value === 1) {
+          for (let offset = 0; offset < run; offset += 1) {
+            const index = (pixel + offset) * 4;
+            overlay.data[index] = 255;
+            overlay.data[index + 1] = 52;
+            overlay.data[index + 2] = 112;
+            overlay.data[index + 3] = 112;
+          }
+        }
+        pixel += run;
+        value = 1 - value;
+      }
+    }
+    overlayContext.putImageData(overlay, 0, 0);
+    context.drawImage(overlayCanvas, 0, 0);
+  });
+  image.src = `/api/scenarios/${encodeURIComponent(result.request.scenario_version)}/render`;
+}
+
 function applicationMarkup(): string {
   return `
     <section class="hero">
@@ -984,6 +1096,17 @@ function applicationMarkup(): string {
         <button data-action="accelerate">Run Apple Accelerate</button>
         <button data-action="timeout" class="secondary">Run expected timeout</button>
       </div>
+      <div class="grounding-controls">
+        <label>Visual target phrase
+          <input data-action="target-phrase" value="red toolbox" maxlength="120">
+        </label>
+        <button data-action="grounded-recorded">Run recorded grounding replay</button>
+        <p>Live Meta grounding is run only through the guarded manual smoke command.</p>
+      </div>
+      <figure class="grounding-preview" data-field="grounding-preview" hidden>
+        <canvas width="800" height="600" aria-label="Recorded grounding mask over exact scenario render"></canvas>
+        <figcaption></figcaption>
+      </figure>
         <div class="actions">
           <label>Modeled allocation budget (bytes)
             <input data-action="memory-budget" aria-label="Modeled allocation budget bytes" type="number" min="0" step="1">
@@ -1052,6 +1175,7 @@ function applicationMarkup(): string {
           <dt>Seed</dt><dd data-field="seed">—</dd>
           <dt>Expectation</dt><dd data-field="expectation">—</dd>
           <dt>Configuration</dt><dd data-field="configuration">—</dd>
+          <dt>Target grounding</dt><dd data-field="grounding">Not used</dd>
           <dt>Controller</dt><dd data-field="controller">—</dd>
           <dt>Risk model</dt><dd data-field="model">Not used</dd>
           <dt>Validation evidence</dt><dd data-field="validation">Not applicable</dd>
