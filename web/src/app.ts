@@ -244,9 +244,11 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
 
   let result: RunResult | undefined;
   let replay: ReplayController | undefined;
+  let comparisonBaseline: RunResult | undefined;
+  let comparisonReplay: ReplayController | undefined;
+  let comparisonScenario: Scenario | undefined;
   let replayStartedAt = 0;
   let replayStartTime = 0;
-  let previousSuccessfulRequest: RunRequest | undefined;
 
   const render = (): void => {
     if (!result || !replay) return;
@@ -256,6 +258,21 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     const slider = root.querySelector<HTMLInputElement>("[data-action='scrub']")!;
     slider.value = String(event.simulated_time_s);
     drawScene(root.querySelector("canvas")!, scenario, result, event);
+    if (comparisonBaseline && comparisonReplay && comparisonScenario) {
+      comparisonReplay.scrubTo(event.simulated_time_s);
+      const comparisonEvent = comparisonReplay.currentEvent() as TraceEvent;
+      drawScene(
+        root.querySelector<HTMLCanvasElement>("[data-field='comparison-canvas']")!,
+        comparisonScenario,
+        comparisonBaseline,
+        comparisonEvent,
+      );
+      setText(
+        root,
+        "comparison-time",
+        `before ${comparisonEvent.simulated_time_s.toFixed(2)} s · after ${event.simulated_time_s.toFixed(2)} s`,
+      );
+    }
     setText(
       root,
       "motion",
@@ -336,6 +353,15 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
       setText(root, "status", "Configuration rejected; last successful run preserved.");
       return;
     }
+    comparisonBaseline = result;
+    comparisonReplay = comparisonBaseline
+      ? new ReplayController(comparisonBaseline.trace)
+      : undefined;
+    comparisonScenario = comparisonBaseline
+      ? scenarios.find(
+          (item) => item.scenario_version === comparisonBaseline?.request.scenario_version,
+        )
+      : undefined;
     result = nextResult;
     replay = new ReplayController(result.trace);
     replayStartedAt = 0;
@@ -379,12 +405,25 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     setText(root, "modeled-memory", formatModeledMemory(result));
     setText(root, "native-paced", formatNativePaced(result));
     setText(root, "configuration-validity", formatConfigurationValidity(result));
+    const comparisonMode = root.querySelector<HTMLSelectElement>(
+      "[data-action='comparison-mode']",
+    )!.value;
+    const declaredFactor =
+      comparisonMode === "controlled"
+        ? root.querySelector<HTMLInputElement>("[data-action='declared-factor']")!.value.trim()
+        : undefined;
     setText(
       root,
       "comparison-validity",
-      formatComparisonValidity(previousSuccessfulRequest, result.request),
+      formatComparisonValidity(comparisonBaseline?.request, result.request, declaredFactor),
     );
-    previousSuccessfulRequest = result.request;
+    setText(
+      root,
+      "comparison-evidence",
+      comparisonBaseline
+        ? formatComparisonEvidence(comparisonBaseline, result)
+        : "Run a second experiment to compare recorded evidence",
+    );
     setText(
       root,
       "phases",
@@ -707,15 +746,32 @@ function formatConfigurationValidity(result: RunResult): string {
 function formatComparisonValidity(
   previous: RunRequest | undefined,
   current: RunRequest,
+  declaredFactor?: string,
 ): string {
   if (!previous) return "First successful configuration; comparison not yet available";
   const differences = runRequestDifferences(previous, current);
   if (differences.length === 0) return "Reproducible replay · no configuration differences";
-  const prefix =
-    differences.length === 1
-      ? "Controlled comparison valid · 1 changed setting"
-      : `Exploratory comparison · ${differences.length} changed settings`;
-  return `${prefix}: ${differences.join(", ")}`;
+  if (declaredFactor) {
+    const valid = differences.length === 1 && differences[0] === declaredFactor;
+    return valid
+      ? `Controlled comparison valid · declared factor ${declaredFactor}`
+      : `Controlled comparison invalid · declared ${declaredFactor} · actual differences: ${differences.join(", ")} · no isolated-cause claim permitted`;
+  }
+  return `Exploratory comparison · ${differences.length} changed settings: ${differences.join(", ")} · no isolated-cause claim permitted`;
+}
+
+function formatComparisonEvidence(before: RunResult, after: RunResult): string {
+  const evidence = (label: string, run: RunResult): string => {
+    const timing =
+      String(run.inference_summary?.timing_provenance ?? "") ||
+      run.runtime_provenance?.timing_provenance ||
+      "not measured";
+    const runtime = run.inference_summary
+      ? `${timing}, completed ${run.inference_summary.completed ?? 0}, dropped ${run.inference_summary.dropped_total ?? 0}, deadline misses ${run.inference_summary.deadline_misses ?? 0}`
+      : `${timing}${run.runtime_provenance?.kernel ? `, ${run.runtime_provenance.kernel}` : ""}`;
+    return `${label} ${run.run_id} · model ${run.model_sha256?.slice(0, 12) ?? "not used"} · numerical disagreements ${run.command_disagreements ?? "not compared"} · runtime ${runtime} · mission ${run.mission_outcome} · test ${run.test_verdict}`;
+  };
+  return `${evidence("before", before)} | ${evidence("after", after)}`;
 }
 
 function runRequestDifferences(previous: RunRequest, current: RunRequest): string[] {
@@ -975,9 +1031,19 @@ function applicationMarkup(): string {
           <p>Fixed contract: differential-drive rover · 16 range rays · 24 model features · fixed candidate structure.</p>
           <button data-action="configured-run">Run saved configuration</button>
         </details>
+        <div class="actions">
+          <label>Comparison mode<select data-action="comparison-mode">
+            <option value="exploratory">Exploratory</option>
+            <option value="controlled">Controlled one-factor</option>
+          </select></label>
+          <label>Declared factor path<input data-action="declared-factor" value="configuration.rover_radius_m"></label>
+        </div>
     </section>
     <section class="mission-grid">
-      <div class="stage"><canvas width="800" height="600" aria-label="Recorded mission replay"></canvas></div>
+      <div class="stage">
+        <canvas width="800" height="600" aria-label="Recorded mission replay"></canvas>
+        <canvas data-field="comparison-canvas" width="800" height="600" aria-label="Before mission replay"></canvas>
+      </div>
       <aside class="evidence">
         <p class="eyebrow">Recorded evidence</p>
         <dl>
@@ -994,6 +1060,8 @@ function applicationMarkup(): string {
           <dt>Native paced timing</dt><dd data-field="native-paced">Not applicable</dd>
           <dt>Configuration validity</dt><dd data-field="configuration-validity">Not available</dd>
           <dt>Comparison validity</dt><dd data-field="comparison-validity">Not available</dd>
+          <dt>Paired comparison evidence</dt><dd data-field="comparison-evidence">Run a second experiment to compare recorded evidence</dd>
+          <dt>Aligned replay time</dt><dd data-field="comparison-time">Not available</dd>
           <dt>Configuration error</dt><dd data-field="configuration-error">None</dd>
           <dt>Accelerate comparison</dt><dd data-field="accelerate-comparison">Recorded evidence unavailable</dd>
           <dt>Phase</dt><dd data-field="phase">Not started</dd>
