@@ -28,6 +28,7 @@ export interface Scenario {
   default_run_request: RunRequest;
   pixels_per_meter?: number;
   source_version?: string | null;
+  photo_reference_sha256?: string | null;
 }
 
 export interface SceneDraft {
@@ -47,6 +48,15 @@ export interface SceneDraft {
     color_rgb: [number, number, number];
   }>;
   source_version: string | null;
+  photo_reference_sha256?: string | null;
+}
+
+export interface PhotoDraftResult {
+  method: "rough_color_region_proposals_v1";
+  claim: string;
+  photo_reference: { sha256: string; url: string; media_type: string };
+  uncertainty: string[];
+  draft: SceneDraft;
 }
 
 export interface RunRequest {
@@ -241,6 +251,7 @@ export interface RoverEdgeApi {
   getScenarios(): Promise<Scenario[]>;
   getSceneDraft?(scenarioVersion: string): Promise<SceneDraft>;
   saveSceneVersion?(draft: SceneDraft): Promise<Scenario>;
+  createPhotoDraft?(name: string, dataUrl: string): Promise<PhotoDraftResult>;
   getAccelerateComparison?(): Promise<AccelerateComparison>;
   run(request: RunRequest): Promise<RunResult>;
 }
@@ -270,6 +281,9 @@ export const httpApi: RoverEdgeApi = {
   },
   async saveSceneVersion(draft) {
     return requestJson<Scenario>("/api/scene-versions", draft);
+  },
+  async createPhotoDraft(name, dataUrl) {
+    return requestJson<PhotoDraftResult>("/api/photo-drafts", { name, data_url: dataUrl });
   },
   async run(request) {
     return requestJson<RunResult>("/api/runs", request);
@@ -303,6 +317,9 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     root.querySelectorAll<HTMLButtonElement>("[data-scene-action]").forEach(
       (button) => (button.disabled = true),
     );
+  }
+  if (!api.createPhotoDraft) {
+    root.querySelector<HTMLButtonElement>("[data-scene-action='photo-draft']")!.disabled = true;
   }
   if (api.getAccelerateComparison) {
     const comparison = await api.getAccelerateComparison();
@@ -660,20 +677,7 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   const setEditor = (name: string, value: string | number): void => {
     editor(name).value = String(value);
   };
-  const loadDraft = async (empty: boolean): Promise<void> => {
-    if (!api.getSceneDraft) return;
-    const draft: SceneDraft = empty
-      ? {
-          name: "Untitled inspection scene",
-          width_m: 8,
-          height_m: 6,
-          pixels_per_meter: 100,
-          dock_pose: { x_m: 1, y_m: 3, heading_rad: 0 },
-          obstacles: [],
-          targets: [],
-          source_version: null,
-        }
-      : await api.getSceneDraft(scenario.scenario_version);
+  const populateDraft = (draft: SceneDraft): void => {
     setEditor("name", draft.name);
     setEditor("scale", draft.pixels_per_meter);
     setEditor("dock-x", draft.dock_pose.x_m);
@@ -695,8 +699,34 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     );
     const target = draft.targets[0];
     setEditor("target-label", target?.label ?? "Red toolbox");
-    root.querySelector<HTMLElement>("[data-field='scene-editor']")!.dataset.sourceVersion =
-      draft.source_version ?? "";
+    const sceneEditor = root.querySelector<HTMLElement>("[data-field='scene-editor']")!;
+    sceneEditor.dataset.sourceVersion = draft.source_version ?? "";
+    sceneEditor.dataset.photoReferenceSha256 = draft.photo_reference_sha256 ?? "";
+    const photoReference = root.querySelector<HTMLImageElement>("[data-field='photo-reference']")!;
+    if (draft.photo_reference_sha256) {
+      photoReference.src = `/api/photo-references/${draft.photo_reference_sha256}`;
+      photoReference.hidden = false;
+    } else {
+      photoReference.removeAttribute("src");
+      photoReference.hidden = true;
+    }
+  };
+  const loadDraft = async (empty: boolean): Promise<void> => {
+    if (!api.getSceneDraft) return;
+    const draft: SceneDraft = empty
+      ? {
+          name: "Untitled inspection scene",
+          width_m: 8,
+          height_m: 6,
+          pixels_per_meter: 100,
+          dock_pose: { x_m: 1, y_m: 3, heading_rad: 0 },
+          obstacles: [],
+          targets: [],
+          source_version: null,
+          photo_reference_sha256: null,
+        }
+      : await api.getSceneDraft(scenario.scenario_version);
+    populateDraft(draft);
     setText(
       root,
       "scene-validation",
@@ -801,15 +831,71 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   root.querySelectorAll("[data-editor]").forEach((input) => {
     input.addEventListener("input", () => {
       try {
+        const confirmationByEditor: Record<string, string> = {
+          scale: "scale",
+          obstacle: "obstacles",
+          "dock-x": "dock",
+          "dock-y": "dock",
+          target: "targets",
+          "target-label": "targets",
+        };
+        const confirmationName = confirmationByEditor[(input as HTMLElement).dataset.editor ?? ""];
+        const hasPhotoReference = Boolean(
+          root.querySelector<HTMLElement>("[data-field='scene-editor']")!.dataset
+            .photoReferenceSha256,
+        );
+        if (hasPhotoReference && confirmationName) {
+          root.querySelector<HTMLInputElement>(
+            `[data-photo-confirmation='${confirmationName}']`,
+          )!.checked = false;
+        }
         drawEditorPreview();
       } catch (error) {
         setText(root, "scene-validation", error instanceof Error ? error.message : String(error));
       }
     });
   });
+  root.querySelector("[data-scene-action='photo-draft']")!.addEventListener("click", async () => {
+    if (!api.createPhotoDraft) return;
+    const file = root.querySelector<HTMLInputElement>("[data-action='photo-upload']")!.files?.[0];
+    if (!file) {
+      setText(root, "photo-draft-status", "Choose a PNG or JPEG reference first.");
+      return;
+    }
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      const generated = await api.createPhotoDraft(editor("name").value, dataUrl);
+      populateDraft(generated.draft);
+      root.querySelectorAll<HTMLInputElement>("[data-photo-confirmation]").forEach(
+        (confirmation) => (confirmation.checked = false),
+      );
+      drawEditorPreview();
+      const reference = root.querySelector<HTMLImageElement>("[data-field='photo-reference']")!;
+      reference.src = generated.photo_reference.url;
+      reference.hidden = false;
+      setText(
+        root,
+        "photo-draft-status",
+        `${generated.claim}. Uncertainty: ${generated.uncertainty.join(" ")}`,
+      );
+    } catch (error) {
+      setText(root, "photo-draft-status", error instanceof Error ? error.message : String(error));
+    }
+  });
   root.querySelector("[data-scene-action='save']")!.addEventListener("click", async () => {
     if (!api.saveSceneVersion) return;
     try {
+      const photoReferenceSha256 =
+        root.querySelector<HTMLElement>("[data-field='scene-editor']")!.dataset
+          .photoReferenceSha256 || null;
+      const confirmations = Array.from(
+        root.querySelectorAll<HTMLInputElement>("[data-photo-confirmation]"),
+      );
+      if (photoReferenceSha256 && confirmations.some((item) => !item.checked)) {
+        throw new Error(
+          "Confirm the photo draft scale, obstacle footprints, dock, and targets before saving.",
+        );
+      }
       const obstacleText = editor("obstacle").value.trim();
       const targetText = editor("target").value.trim();
       const obstacles = obstacleText
@@ -851,6 +937,7 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
         obstacles,
         targets,
         source_version: root.querySelector<HTMLElement>("[data-field='scene-editor']")!.dataset.sourceVersion || null,
+        photo_reference_sha256: photoReferenceSha256,
       });
       scenarios.push(saved);
       selector.add(new Option(saved.name, saved.scenario_version));
@@ -913,6 +1000,15 @@ async function requestJson<T>(path: string, body?: unknown): Promise<T> {
     throw new Error(detail || `Request failed with status ${response.status}`);
   }
   return (await response.json()) as T;
+}
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(String(reader.result)));
+    reader.addEventListener("error", () => reject(new Error("Unable to read the selected photo")));
+    reader.readAsDataURL(file);
+  });
 }
 
 function setText(root: HTMLElement, field: string, value: string): void {
@@ -1341,6 +1437,8 @@ function applicationMarkup(): string {
         <div class="controls">
           <button data-scene-action="preset">Edit selected preset</button>
           <button data-scene-action="empty">Start empty</button>
+          <label>Photo reference <input data-action="photo-upload" type="file" accept="image/png,image/jpeg"></label>
+          <button data-scene-action="photo-draft">Generate rough uncertain draft</button>
           <label>Name <input data-editor="name" value="Untitled inspection scene"></label>
           <label>Scale (px/m) <input data-editor="scale" type="number" min="20" max="400" value="100"></label>
           <label>Dock X <input data-editor="dock-x" type="number" step="0.1" value="1"></label>
@@ -1351,6 +1449,15 @@ function applicationMarkup(): string {
           <button data-scene-action="save">Confirm and save new version</button>
         </div>
         <p data-field="scene-validation">Load a preset or start empty. Saving validates geometry and creates a new immutable version.</p>
+        <p data-field="photo-draft-status">Photo drafting uses rough color-region proposals and never claims metric reconstruction.</p>
+        <img data-field="photo-reference" alt="Original uploaded photo reference" hidden>
+        <fieldset>
+          <legend>Required photo-draft confirmation</legend>
+          <label><input type="checkbox" data-photo-confirmation="scale"> Scale corrected or confirmed</label>
+          <label><input type="checkbox" data-photo-confirmation="obstacles"> Obstacle footprints corrected or confirmed</label>
+          <label><input type="checkbox" data-photo-confirmation="dock"> Dock corrected or confirmed</label>
+          <label><input type="checkbox" data-photo-confirmation="targets"> Targets corrected or confirmed</label>
+        </fieldset>
         <figure>
           <canvas data-field="scene-preview" width="800" height="600" aria-label="Editable top-down scene confirmation preview"></canvas>
           <figcaption data-field="scene-preview-scale">100 px/m declared scale</figcaption>

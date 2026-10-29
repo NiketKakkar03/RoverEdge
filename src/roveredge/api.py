@@ -10,6 +10,7 @@ from .experiment import preset_run_request, run_experiment
 from .grounding import RecordedGroundingAdapter
 from .models import RunRequest, RunResult, VisualTarget
 from .native import accelerate_available
+from .photo_drafting import PhotoDraftRequest, create_photo_draft, get_photo_reference
 from .scenarios import (
     SAVED_SCENARIOS,
     SCENARIOS,
@@ -35,6 +36,7 @@ def _scenario_document(scenario: Scenario) -> dict[str, object]:
         "dock_pose": asdict(scenario.dock_pose),
         "pixels_per_meter": scenario.pixels_per_meter,
         "source_version": scenario.source_version,
+        "photo_reference_sha256": scenario.photo_reference_sha256,
         "target": (
             {
                 "id": target.object_id,
@@ -82,6 +84,23 @@ def create_scene_version(draft: SceneDraft) -> dict[str, object]:
         return _scenario_document(save_scene_version(draft))
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/photo-drafts")
+def draft_scene_from_photo(request: PhotoDraftRequest) -> dict[str, object]:
+    try:
+        return create_photo_draft(request)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/api/photo-references/{photo_sha256}")
+def read_photo_reference(photo_sha256: str) -> Response:
+    try:
+        photo_bytes, media_type = get_photo_reference(photo_sha256)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return Response(photo_bytes, media_type=media_type)
 
 
 @app.get("/api/scenarios/preset-open")
