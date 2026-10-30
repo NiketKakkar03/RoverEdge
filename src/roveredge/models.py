@@ -194,6 +194,20 @@ class KnownTargetFixture:
 
 
 @dataclass(frozen=True)
+class MultiTargetFixture:
+    kind: Literal["multi_target_fixture"]
+    target_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if len(self.target_ids) < 2:
+            raise ValueError("multi-target missions require at least two targets")
+        if any(not target_id.strip() for target_id in self.target_ids):
+            raise ValueError("multi-target identities cannot be empty")
+        if len(set(self.target_ids)) != len(self.target_ids):
+            raise ValueError("multi-target identities must be unique")
+
+
+@dataclass(frozen=True)
 class VisualTarget:
     kind: Literal["visual_target"]
     phrase: str
@@ -207,7 +221,7 @@ class VisualTarget:
             raise ValueError("visual target phrase cannot have surrounding whitespace")
 
 
-TargetRequest = KnownTargetFixture | VisualTarget
+TargetRequest = KnownTargetFixture | MultiTargetFixture | VisualTarget
 
 
 @dataclass(frozen=True)
@@ -265,6 +279,24 @@ class InspectionObservation:
     pose: Pose
     simulated_time_s: float
     completion_status: Literal["captured"]
+
+
+@dataclass(frozen=True)
+class TargetVisitEvidence:
+    target_id: str
+    required_ordinal: int
+    pose: Pose | None
+    dwell_completed: bool
+    status: Literal[
+        "captured",
+        "not_visited_timeout",
+        "not_visited_collision",
+        "not_visited_setup_failure",
+        "unreachable",
+        "target_not_found",
+        "target_ambiguous",
+    ]
+    observation_sequence: int | None = None
 
 
 @dataclass(frozen=True)
@@ -344,3 +376,4 @@ class RunResult:
     inference_summary: dict[str, int | float | str] | None = None
     configuration_validity: ConfigurationValidity | None = None
     grounding_evidence: GroundingEvidence | None = None
+    target_visits: tuple[TargetVisitEvidence, ...] = ()
