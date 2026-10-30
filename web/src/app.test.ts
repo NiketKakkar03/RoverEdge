@@ -237,6 +237,40 @@ describe("mission replay application", () => {
     expect(root.querySelector("[data-field='expectation']")?.textContent).toContain("timed_out");
   });
 
+  test("downloads run and comparison evidence from recorded results", async () => {
+    const exportRun = vi.fn(async () => new Blob(["run"]));
+    const exportComparison = vi.fn(async () => new Blob(["comparison"]));
+    const api: RoverEdgeApi = {
+      getScenarios: async () => [scenario],
+      run: async (request) =>
+        request.expected_mission_outcome === "timed_out" ? timeoutResult : result,
+      exportRun,
+      exportComparison,
+    };
+    const createObjectURL = vi.fn(() => "blob:roveredge");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='start']")!);
+    await waitFor(() => expect(exportRun).not.toHaveBeenCalled());
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='export-run']")!);
+    await waitFor(() => expect(exportRun).toHaveBeenCalledWith(result));
+
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='timeout']")!);
+    await waitFor(() => {
+      expect(root.querySelector("[data-field='outcome']")?.textContent).toContain("timed_out");
+    });
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='export-comparison']")!);
+    await waitFor(() => expect(exportComparison).toHaveBeenCalledWith(result, timeoutResult, undefined));
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
+  });
+
   test("selects a fixed obstacle scenario and runs its server-owned request", async () => {
     const narrow: Scenario = {
       ...scenario,

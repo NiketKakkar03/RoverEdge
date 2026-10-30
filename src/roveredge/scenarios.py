@@ -373,7 +373,7 @@ def physical_run_request(
     scenario_version: str,
     expected_mission_outcome: MissionOutcome | None = None,
 ) -> RunRequest:
-    get_scenario(scenario_version)
+    scenario = get_scenario(scenario_version)
     if expected_mission_outcome is None:
         if scenario_version == "fixture-unreachable-v1":
             expected_mission_outcome = "unreachable"
@@ -388,7 +388,12 @@ def physical_run_request(
     return RunRequest(
         scenario_version=scenario_version,
         target=KnownTargetFixture(
-            kind="known_target_fixture", target_id="preset-storage-container"
+            kind="known_target_fixture",
+            target_id=(
+                scenario.visual_objects[0].object_id
+                if scenario_version.startswith("scene-") and scenario.visual_objects
+                else "preset-storage-container"
+            ),
         ),
         simulation_seed=20261027,
         configuration=RunConfiguration(),

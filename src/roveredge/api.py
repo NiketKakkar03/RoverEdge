@@ -3,9 +3,18 @@ import re
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
+from .comparison import compare_runs
+from .evidence import (
+    EvidenceBundleError,
+    export_comparison_bundle,
+    export_run_bundle,
+    load_evidence_bundle,
+    reproduce_evidence_bundle,
+)
 from .experiment import preset_run_request, run_experiment
 from .grounding import RecordedGroundingAdapter
 from .models import RunRequest, RunResult, VisualTarget
@@ -25,6 +34,12 @@ from .scenarios import (
 from .scene_rendering import render_scene
 
 app = FastAPI(title="RoverEdge", version="0.1.0")
+
+
+class ComparisonBundleRequest(BaseModel):
+    before: RunResult
+    after: RunResult
+    declared_factor: str | None = None
 
 
 def _scenario_document(scenario: Scenario) -> dict[str, object]:
@@ -190,6 +205,44 @@ def create_run(request: RunRequest) -> RunResult:
         return run_experiment(request)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/evidence-bundles/run")
+def export_run_evidence(result: RunResult) -> Response:
+    bundle = export_run_bundle(result)
+    return Response(
+        bundle,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="roveredge-run-{result.run_id}.zip"'
+            )
+        },
+    )
+
+
+@app.post("/api/evidence-bundles/comparison")
+def export_comparison_evidence(request: ComparisonBundleRequest) -> Response:
+    comparison = compare_runs(
+        request.before,
+        request.after,
+        declared_factor=request.declared_factor,
+    )
+    bundle = export_comparison_bundle(request.before, request.after, comparison)
+    return Response(
+        bundle,
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="roveredge-comparison.zip"'},
+    )
+
+
+@app.post("/api/evidence-bundles/reproduce")
+def reproduce_evidence(payload: bytes = Body(media_type="application/zip")) -> dict[str, object]:
+    try:
+        result = reproduce_evidence_bundle(load_evidence_bundle(payload))
+    except EvidenceBundleError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {"matches": result.matches, "run_ids": list(result.run_ids)}
 
 
 web_distribution = Path(__file__).resolve().parents[2] / "dist"

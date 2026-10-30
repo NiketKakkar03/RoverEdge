@@ -270,6 +270,12 @@ export interface RoverEdgeApi {
   createPhotoDraft?(name: string, dataUrl: string): Promise<PhotoDraftResult>;
   getAccelerateComparison?(): Promise<AccelerateComparison>;
   run(request: RunRequest): Promise<RunResult>;
+  exportRun?(result: RunResult): Promise<Blob>;
+  exportComparison?(
+    before: RunResult,
+    after: RunResult,
+    declaredFactor?: string,
+  ): Promise<Blob>;
 }
 
 interface AccelerateComparison {
@@ -304,6 +310,16 @@ export const httpApi: RoverEdgeApi = {
   async run(request) {
     return requestJson<RunResult>("/api/runs", request);
   },
+  async exportRun(result) {
+    return requestBlob("/api/evidence-bundles/run", result);
+  },
+  async exportComparison(before, after, declaredFactor) {
+    return requestBlob("/api/evidence-bundles/comparison", {
+      before,
+      after,
+      declared_factor: declaredFactor ?? null,
+    });
+  },
 };
 
 export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): Promise<void> {
@@ -337,6 +353,12 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   if (!api.createPhotoDraft) {
     root.querySelector<HTMLButtonElement>("[data-scene-action='photo-draft']")!.disabled = true;
   }
+  const exportRunButton = root.querySelector<HTMLButtonElement>("[data-action='export-run']")!;
+  const exportComparisonButton = root.querySelector<HTMLButtonElement>(
+    "[data-action='export-comparison']",
+  )!;
+  exportRunButton.disabled = true;
+  exportComparisonButton.disabled = true;
   if (api.getAccelerateComparison) {
     const comparison = await api.getAccelerateComparison();
     const recorded = comparison.recorded_result;
@@ -480,6 +502,8 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     replayStartTime = 0;
     setText(root, "configuration-error", "None");
     setText(root, "status", result.terminal_reason);
+    exportRunButton.disabled = !api.exportRun;
+    exportComparisonButton.disabled = !api.exportComparison || !comparisonBaseline;
     setText(
       root,
       "failure",
@@ -574,6 +598,27 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   root
     .querySelector("[data-action='start']")!
     .addEventListener("click", () => void run(() => api.run(scenario.default_run_request)));
+  exportRunButton.addEventListener("click", async () => {
+    if (!result || !api.exportRun) return;
+    downloadBlob(
+      await api.exportRun(result),
+      `roveredge-run-${result.run_id}.zip`,
+    );
+  });
+  exportComparisonButton.addEventListener("click", async () => {
+    if (!result || !comparisonBaseline || !api.exportComparison) return;
+    const comparisonMode = root.querySelector<HTMLSelectElement>(
+      "[data-action='comparison-mode']",
+    )!.value;
+    const declaredFactor =
+      comparisonMode === "controlled"
+        ? root.querySelector<HTMLInputElement>("[data-action='declared-factor']")!.value.trim()
+        : undefined;
+    downloadBlob(
+      await api.exportComparison(comparisonBaseline, result, declaredFactor),
+      "roveredge-comparison.zip",
+    );
+  });
   root
     .querySelector("[data-action='grounded-recorded']")!
     .addEventListener("click", () => {
@@ -1041,6 +1086,28 @@ async function requestJson<T>(path: string, body?: unknown): Promise<T> {
     throw new Error(detail || `Request failed with status ${response.status}`);
   }
   return (await response.json()) as T;
+}
+
+async function requestBlob(path: string, body: unknown): Promise<Blob> {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const error = (await response.json()) as { detail?: string };
+    throw new Error(error.detail || `Request failed with status ${response.status}`);
+  }
+  return response.blob();
+}
+
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -1536,6 +1603,10 @@ function applicationMarkup(): string {
             <input data-action="memory-budget" aria-label="Modeled allocation budget bytes" type="number" min="0" step="1">
           </label>
           <button data-action="modeled-memory">Run modeled memory experiment</button>
+        </div>
+        <div class="actions">
+          <button data-action="export-run">Download run evidence bundle</button>
+          <button data-action="export-comparison">Download comparison evidence bundle</button>
         </div>
         <details>
           <summary>Configure rover and device experiment</summary>
