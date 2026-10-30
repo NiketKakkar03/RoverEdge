@@ -366,6 +366,119 @@ describe("mission replay application", () => {
     });
   });
 
+  test("turns an uploaded photo draft into a corrected saved mission", async () => {
+    const photoDraft = {
+      method: "rough_color_region_proposals_v1" as const,
+      claim: "heuristic draft only; no automatic metric or hidden-geometry reconstruction",
+      photo_reference: {
+        sha256: "a".repeat(64),
+        url: `/api/photo-references/${"a".repeat(64)}`,
+        media_type: "image/png",
+      },
+      uncertainty: ["Scale is not measured.", "Dock pose must be confirmed."],
+      draft: {
+        name: "Photo warehouse",
+        width_m: 8,
+        height_m: 6,
+        pixels_per_meter: 100,
+        dock_pose: { x_m: 1, y_m: 3, heading_rad: 0 },
+        obstacles: [],
+        targets: [
+          {
+            object_id: "photo-red-target",
+            label: "Red toolbox" as const,
+            x_min_m: 5.5,
+            y_min_m: 2.2,
+            x_max_m: 7,
+            y_max_m: 3.8,
+            color_rgb: [196, 54, 45] as [number, number, number],
+          },
+        ],
+        source_version: null,
+        photo_reference_sha256: "a".repeat(64),
+      },
+    };
+    const saved: Scenario = {
+      ...scenario,
+      scenario_version: "scene-photo-confirmed",
+      name: "Photo warehouse",
+      photo_reference_sha256: "a".repeat(64),
+      default_run_request: {
+        ...scenario.default_run_request,
+        scenario_version: "scene-photo-confirmed",
+      },
+    };
+    const createPhotoDraft = vi.fn(async () => photoDraft);
+    const saveSceneVersion = vi.fn(async (_draft: import("./app").SceneDraft) => saved);
+    const run = vi.fn(async () => ({ ...result, request: saved.default_run_request }));
+    const api: RoverEdgeApi = {
+      getScenarios: async () => [scenario],
+      getSceneDraft: async () => photoDraft.draft,
+      createPhotoDraft,
+      saveSceneVersion,
+      run,
+    };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    const upload = root.querySelector<HTMLInputElement>("[data-action='photo-upload']")!;
+    fireEvent.change(upload, {
+      target: { files: [new File(["representative photo"], "warehouse.png", { type: "image/png" })] },
+    });
+    fireEvent.click(root.querySelector("[data-scene-action='photo-draft']")!);
+    await waitFor(() => expect(createPhotoDraft).toHaveBeenCalled());
+    expect(root.querySelector("[data-field='photo-draft-status']")?.textContent).toContain(
+      "no automatic metric",
+    );
+    expect(root.querySelector<HTMLImageElement>("[data-field='photo-reference']")?.src).toContain(
+      photoDraft.photo_reference.url,
+    );
+
+    fireEvent.input(root.querySelector("[data-editor='scale']")!, {
+      target: { value: "120" },
+    });
+    fireEvent.click(root.querySelector("[data-scene-action='save']")!);
+    expect(saveSceneVersion).not.toHaveBeenCalled();
+    expect(root.querySelector("[data-field='scene-validation']")?.textContent).toContain(
+      "Confirm the photo draft scale",
+    );
+    root.querySelectorAll<HTMLInputElement>("[data-photo-confirmation]").forEach((input) => {
+      fireEvent.click(input);
+    });
+    fireEvent.input(root.querySelector("[data-editor='dock-x']")!, {
+      target: { value: "0.8" },
+    });
+    fireEvent.click(root.querySelector("[data-scene-action='save']")!);
+    expect(saveSceneVersion).not.toHaveBeenCalled();
+    fireEvent.click(root.querySelector("[data-photo-confirmation='dock']")!);
+    fireEvent.click(root.querySelector("[data-scene-action='save']")!);
+    await waitFor(() => expect(saveSceneVersion).toHaveBeenCalled());
+    expect(saveSceneVersion.mock.calls[0]![0]).toMatchObject({
+      pixels_per_meter: 120,
+      photo_reference_sha256: "a".repeat(64),
+    });
+    const reopenedReference = root.querySelector<HTMLImageElement>("[data-field='photo-reference']")!;
+    reopenedReference.hidden = true;
+    fireEvent.click(root.querySelector("[data-scene-action='preset']")!);
+    await waitFor(() => expect(reopenedReference.hidden).toBe(false));
+    expect(reopenedReference.src).toContain(`/api/photo-references/${"a".repeat(64)}`);
+    fireEvent.click(root.querySelector("[data-action='start']")!);
+    await waitFor(() => expect(run).toHaveBeenCalledWith(saved.default_run_request));
+    fireEvent.click(root.querySelector("[data-action='grounded-recorded']")!);
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith({
+        ...saved.default_run_request,
+        target: {
+          kind: "visual_target",
+          phrase: "red toolbox",
+          grounding_source: "recorded",
+        },
+      }),
+    );
+  });
+
   test("submits a recorded visual target and displays grounding provenance", async () => {
     const groundedResult: RunResult = {
       ...result,

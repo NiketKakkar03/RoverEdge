@@ -1,7 +1,10 @@
+import base64
 from dataclasses import asdict
+from io import BytesIO
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from PIL import Image, ImageDraw
 
 from roveredge import physical_run_request, preset_run_request
 from roveredge.api import app
@@ -366,3 +369,143 @@ def test_scene_validation_checks_every_target_standoff() -> None:
     assert errors == [
         "dock cannot reach a collision-free inspection standoff for target blue-barrel"
     ]
+
+
+def test_photo_draft_preserves_reference_requires_correction_and_runs_confirmed_scene(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setattr("roveredge.photo_drafting.PHOTO_STORE", tmp_path / "photos")
+    monkeypatch.setattr("roveredge.scenarios.SCENE_STORE", tmp_path / "scenarios")
+    SAVED_SCENARIOS.clear()
+    image = Image.new("RGB", (200, 120), (230, 230, 225))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((70, 20, 90, 50), fill=(40, 40, 40))
+    draw.rectangle((140, 50, 175, 85), fill=(210, 35, 30))
+    output = BytesIO()
+    image.save(output, format="PNG")
+    data_url = "data:image/png;base64," + base64.b64encode(output.getvalue()).decode()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/photo-drafts", json={"name": "Uploaded warehouse", "data_url": data_url}
+    )
+
+    assert response.status_code == 200
+    generated = response.json()
+    assert generated["method"] == "rough_color_region_proposals_v1"
+    assert "no automatic metric" in generated["claim"]
+    assert generated["draft"]["photo_reference_sha256"] == generated["photo_reference"][
+        "sha256"
+    ]
+    assert generated["draft"]["targets"][0]["label"] == "Red toolbox"
+    assert any("Scale defaults" in item for item in generated["uncertainty"])
+    photo = client.get(generated["photo_reference"]["url"])
+    assert photo.content == output.getvalue()
+    assert photo.headers["content-type"] == "image/png"
+
+    draft = generated["draft"]
+    draft["pixels_per_meter"] = 120
+    draft["dock_pose"] = {"x_m": 0.8, "y_m": 3.0, "heading_rad": 0.0}
+    saved = client.post("/api/scene-versions", json=draft)
+    assert saved.status_code == 201
+    saved_document = saved.json()
+    assert saved_document["photo_reference_sha256"] == generated["photo_reference"]["sha256"]
+    assert client.get(
+        f"/api/scenarios/{saved_document['scenario_version']}/render"
+    ).status_code == 200
+    mission = client.post("/api/runs", json=saved_document["default_run_request"])
+    assert mission.status_code == 200
+    assert mission.json()["mission_outcome"] == "completed"
+
+
+def test_photo_draft_rejects_invalid_upload_and_leaves_incomplete_draft_editable(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    monkeypatch.setattr("roveredge.photo_drafting.PHOTO_STORE", tmp_path / "photos")
+    client = TestClient(app)
+    invalid = client.post(
+        "/api/photo-drafts", json={"name": "Bad", "data_url": "data:text/plain;base64,SGk="}
+    )
+    assert invalid.status_code == 422
+    assert "base64 PNG or JPEG" in invalid.json()["detail"]
+
+    blank = Image.new("RGB", (64, 64), (230, 230, 225))
+    output = BytesIO()
+    blank.save(output, format="PNG")
+    generated = client.post(
+        "/api/photo-drafts",
+        json={
+            "name": "Incomplete draft",
+            "data_url": "data:image/png;base64,"
+            + base64.b64encode(output.getvalue()).decode(),
+        },
+    ).json()
+    assert generated["draft"]["targets"] == []
+    assert any("add a target" in item for item in generated["uncertainty"])
+
+
+def test_photo_draft_validates_all_declared_upload_boundaries(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr("roveredge.photo_drafting.PHOTO_STORE", tmp_path / "photos")
+    client = TestClient(app)
+
+    blank_name = client.post(
+        "/api/photo-drafts", json={"name": " ", "data_url": "data:image/png;base64,AA=="}
+    )
+    assert blank_name.status_code == 422
+    assert blank_name.json()["detail"] == "photo draft name is required"
+
+    malformed = client.post(
+        "/api/photo-drafts", json={"name": "Malformed", "data_url": "data:image/png;base64,%%%"}
+    )
+    assert malformed.status_code == 422
+    assert "invalid base64" in malformed.json()["detail"]
+    empty = client.post(
+        "/api/photo-drafts", json={"name": "Empty", "data_url": "data:image/png;base64,"}
+    )
+    assert empty.status_code == 422
+    assert "1 byte to 8 MiB" in empty.json()["detail"]
+    corrupt = client.post(
+        "/api/photo-drafts",
+        json={"name": "Corrupt", "data_url": "data:image/png;base64,bm90LWEtcG5n"},
+    )
+    assert corrupt.status_code == 422
+    assert "valid PNG or JPEG" in corrupt.json()["detail"]
+
+    small = Image.new("RGB", (16, 16), (255, 255, 255))
+    small_output = BytesIO()
+    small.save(small_output, format="PNG")
+    too_small = client.post(
+        "/api/photo-drafts",
+        json={
+            "name": "Small",
+            "data_url": "data:image/png;base64,"
+            + base64.b64encode(small_output.getvalue()).decode(),
+        },
+    )
+    assert too_small.status_code == 422
+    assert "at least 32 by 32" in too_small.json()["detail"]
+
+    oversize = client.post(
+        "/api/photo-drafts",
+        json={
+            "name": "Oversize",
+            "data_url": "data:image/jpeg;base64,"
+            + base64.b64encode(b"0" * (8 * 1024 * 1024 + 1)).decode(),
+        },
+    )
+    assert oversize.status_code == 422
+    assert "1 byte to 8 MiB" in oversize.json()["detail"]
+
+    jpeg = Image.new("RGB", (64, 64), (230, 230, 225))
+    jpeg_output = BytesIO()
+    jpeg.save(jpeg_output, format="JPEG")
+    accepted = client.post(
+        "/api/photo-drafts",
+        json={
+            "name": "JPEG",
+            "data_url": "data:image/jpeg;base64,"
+            + base64.b64encode(jpeg_output.getvalue()).decode(),
+        },
+    )
+    assert accepted.status_code == 200
+    assert accepted.json()["photo_reference"]["media_type"] == "image/jpeg"

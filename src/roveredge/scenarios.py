@@ -41,6 +41,7 @@ class Scenario:
     visual_objects: tuple[VisualObject, ...] = ()
     pixels_per_meter: float = 100.0
     source_version: str | None = None
+    photo_reference_sha256: str | None = None
 
 
 def _scenario(
@@ -181,6 +182,7 @@ class SceneDraft:
     obstacles: tuple[Obstacle, ...]
     targets: tuple[VisualObject, ...]
     source_version: str | None = None
+    photo_reference_sha256: str | None = None
 
 
 def scene_draft(scenario: Scenario) -> SceneDraft:
@@ -193,6 +195,7 @@ def scene_draft(scenario: Scenario) -> SceneDraft:
         obstacles=scenario.obstacles,
         targets=scenario.visual_objects,
         source_version=scenario.scenario_version,
+        photo_reference_sha256=scenario.photo_reference_sha256,
     )
 
 
@@ -321,6 +324,7 @@ def _scenario_from_draft(
         visual_objects=tuple(draft.targets),
         pixels_per_meter=draft.pixels_per_meter,
         source_version=draft.source_version,
+        photo_reference_sha256=draft.photo_reference_sha256,
     )
 
 
@@ -346,6 +350,7 @@ def reload_saved_scenarios() -> None:
             ),
             pixels_per_meter=document["pixels_per_meter"],
             source_version=document.get("source_version"),
+            photo_reference_sha256=document.get("photo_reference_sha256"),
         )
         SAVED_SCENARIOS[scenario.scenario_version] = scenario
 
