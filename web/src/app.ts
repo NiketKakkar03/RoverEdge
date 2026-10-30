@@ -63,6 +63,7 @@ export interface RunRequest {
   scenario_version: string;
   target:
     | { kind: "known_target_fixture"; target_id: string }
+    | { kind: "multi_target_fixture"; target_ids: string[] }
     | { kind: "visual_target"; phrase: string; grounding_source: "live" | "recorded" };
   simulation_seed: number;
   configuration: {
@@ -245,6 +246,21 @@ export interface RunResult {
     obstacle_id?: string | null;
     contact_point?: { x_m: number; y_m: number } | null;
   } | null;
+  target_visits?: Array<{
+    target_id: string;
+    required_ordinal: number;
+    pose?: Pose | null;
+    dwell_completed: boolean;
+    status:
+      | "captured"
+      | "not_visited_timeout"
+      | "not_visited_collision"
+      | "not_visited_setup_failure"
+      | "unreachable"
+      | "target_not_found"
+      | "target_ambiguous";
+    observation_sequence?: number | null;
+  }>;
 }
 
 export interface RoverEdgeApi {
@@ -480,6 +496,18 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     setText(root, "verdict", result.test_verdict);
     setText(
       root,
+      "target-visits",
+      result.target_visits?.length
+        ? result.target_visits
+            .map(
+              (visit) =>
+                `${visit.required_ordinal + 1}. ${visit.target_id}: ${visit.status} · dwell ${visit.dwell_completed ? "complete" : "incomplete"}${visit.pose ? ` · pose (${visit.pose.x_m.toFixed(2)}, ${visit.pose.y_m.toFixed(2)}, ${visit.pose.heading_rad.toFixed(2)})` : ""}`,
+            )
+            .join(" | ")
+        : "Single-target evidence is recorded in observations.",
+    );
+    setText(
+      root,
       "grounding",
       result.grounding_evidence
         ? `${result.grounding_evidence.source} · ${result.grounding_evidence.status} · ${result.grounding_evidence.model} · phrase “${result.grounding_evidence.target_phrase}” · render ${result.grounding_evidence.render_sha256.slice(0, 12)}…`
@@ -559,6 +587,19 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
         }),
       );
     });
+  root.querySelector("[data-action='multi-target']")!.addEventListener("click", () => {
+    const targetIds = root
+      .querySelector<HTMLInputElement>("[data-action='multi-target-ids']")!
+      .value.split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+    void run(() =>
+      api.run({
+        ...scenario.default_run_request,
+        target: { kind: "multi_target_fixture", target_ids: targetIds },
+      }),
+    );
+  });
   root
     .querySelector("[data-action='learned']")!
     .addEventListener("click", () =>
@@ -1480,6 +1521,12 @@ function applicationMarkup(): string {
         <button data-action="grounded-recorded">Run recorded grounding replay</button>
         <p>Live Meta grounding is run only through the guarded manual smoke command.</p>
       </div>
+      <div class="grounding-controls">
+        <label>Required target sequence
+          <input data-action="multi-target-ids" value="preset-storage-container, secondary-inspection-point">
+        </label>
+        <button data-action="multi-target">Run multi-target mission</button>
+      </div>
       <figure class="grounding-preview" data-field="grounding-preview" hidden>
         <canvas width="800" height="600" aria-label="Recorded grounding mask over exact scenario render"></canvas>
         <figcaption></figcaption>
@@ -1573,6 +1620,7 @@ function applicationMarkup(): string {
           <dt>Prediction age</dt><dd data-field="prediction-age">Not available</dd>
           <dt>Queue state</dt><dd data-field="queue-state">Not available</dd>
           <dt>Mission outcome</dt><dd data-field="outcome">—</dd>
+          <dt>Required target visits</dt><dd data-field="target-visits">Not available</dd>
           <dt>Test verdict</dt><dd data-field="verdict">—</dd>
           <dt>Terminal failure</dt><dd data-field="failure">None</dd>
         </dl>

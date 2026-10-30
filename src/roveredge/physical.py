@@ -27,11 +27,13 @@ from .models import (
     KnownTargetFixture,
     MissionOutcome,
     MissionPhase,
+    MultiTargetFixture,
     Point,
     Pose,
     RunConfiguration,
     RunRequest,
     RunResult,
+    TargetVisitEvidence,
     TerminalFailure,
     TestVerdict,
     TraceEvent,
@@ -39,7 +41,7 @@ from .models import (
 from .native import NativeRiskModel, runtime_provenance
 from .native_paced import NativePacedEvent, NativePacedExecutor
 from .planning import plan_route
-from .scenarios import Scenario, get_scenario, is_saved_scenario_version, physical_run_request
+from .scenarios import Scenario, VisualObject, get_scenario, physical_run_request
 
 
 def physical_open_run_request() -> RunRequest:
@@ -52,16 +54,13 @@ def run_physical_experiment(
     scenario_override: Scenario | None = None,
     observation_target_id: str | None = None,
 ) -> RunResult:
-    if not isinstance(request.target, KnownTargetFixture):
+    if not isinstance(request.target, (KnownTargetFixture, MultiTargetFixture)):
         raise ValueError("visual target must be grounded before physical execution")
-    target_id = request.target.target_id
-    if (
-        scenario_override is None
-        and not is_saved_scenario_version(request.scenario_version)
-        and target_id != "preset-storage-container"
-    ):
-        raise ValueError(f"unsupported target: {target_id}")
-
+    target_ids = (
+        request.target.target_ids
+        if isinstance(request.target, MultiTargetFixture)
+        else (request.target.target_id,)
+    )
     configuration = request.configuration
     risk_model = (
         _load_default_risk_model()
@@ -104,23 +103,34 @@ def run_physical_experiment(
         else None
     )
     scenario = scenario_override or get_scenario(request.scenario_version)
+    resolved_targets, setup_outcome = _resolve_mission_targets(
+        scenario,
+        target_ids,
+        grounded_target_id=(observation_target_id if scenario_override is not None else None),
+    )
+    if setup_outcome is not None:
+        return _target_setup_failure(
+            request, scenario, target_ids, setup_outcome[0], setup_outcome[1]
+        )
+    target_poses = tuple(item[1] for item in resolved_targets)
     inflation = configuration.rover_radius_m + configuration.planning_clearance_m
-    outbound_route = plan_route(
-        scenario,
-        scenario.initial_pose,
-        scenario.inspection_pose,
-        configuration.route_grid_resolution_m,
-        inflation,
+    route_starts = (scenario.initial_pose, *target_poses)
+    route_goals = (*target_poses, scenario.dock_pose)
+    planned_route_options = tuple(
+        plan_route(
+            scenario,
+            start,
+            goal,
+            configuration.route_grid_resolution_m,
+            inflation,
+        )
+        for start, goal in zip(route_starts, route_goals, strict=True)
     )
-    return_route = plan_route(
-        scenario,
-        scenario.inspection_pose,
-        scenario.dock_pose,
-        configuration.route_grid_resolution_m,
-        inflation,
-    )
-    if outbound_route is None or return_route is None:
-        return _unreachable_result(request, scenario, risk_model)
+    if any(item is None for item in planned_route_options):
+        return _unreachable_result(request, scenario, risk_model, target_ids)
+    planned_routes = tuple(item for item in planned_route_options if item is not None)
+    outbound_route = planned_routes[0]
+    return_route = planned_routes[-1]
 
     pose = scenario.initial_pose
     linear_velocity = scenario.initial_linear_velocity_mps
@@ -138,6 +148,7 @@ def run_physical_experiment(
     latest_ranges: tuple[float, ...] | None = None
     route = outbound_route
     route_index = 1
+    target_index = 0
     inference_counts = {
         "scheduled": 0,
         "admitted": 0,
@@ -370,7 +381,7 @@ def run_physical_experiment(
         elif phase == "aligning_to_target":
             desired_angular, aligned = _command_heading(
                 pose,
-                scenario.inspection_pose.heading_rad,
+                target_poses[target_index].heading_rad,
                 configuration.inspection.heading_tolerance_rad,
                 configuration,
             )
@@ -385,7 +396,7 @@ def run_physical_experiment(
             if simulated_time - dwell_started_at >= configuration.inspection.dwell_s:
                 observations.append(
                     InspectionObservation(
-                        target_id=observation_target_id or target_id,
+                        target_id=(observation_target_id or target_ids[target_index]),
                         pose=_rounded_pose(pose),
                         simulated_time_s=round(simulated_time, 9),
                         completion_status="captured",
@@ -394,6 +405,13 @@ def run_physical_experiment(
                 transition("observation_captured")
                 record("observation_captured")
         elif phase == "observation_captured":
+            if target_index < len(target_ids) - 1:
+                target_index += 1
+                route = planned_routes[target_index]
+                route_index = 1
+                dwell_started_at = None
+                transition("approaching_target")
+                continue
             route = return_route
             route_index = 1
             transition("returning_to_dock")
@@ -790,7 +808,7 @@ def run_physical_experiment(
         mission_outcome=outcome,
         test_verdict=verdict,
         terminal_reason=terminal_reason,
-        planned_routes=(outbound_route, return_route),
+        planned_routes=planned_routes,
         terminal_failure=terminal_failure,
         controller_kind=configuration.controller_kind,
         model_version=risk_model.artifact_version if risk_model is not None else None,
@@ -840,11 +858,15 @@ def run_physical_experiment(
             )
         ),
         configuration_validity=assess_configuration(configuration),
+        target_visits=_target_visit_evidence(target_ids, observations, outcome),
     )
 
 
 def _unreachable_result(
-    request: RunRequest, scenario: Scenario, risk_model: RiskModelArtifact | None
+    request: RunRequest,
+    scenario: Scenario,
+    risk_model: RiskModelArtifact | None,
+    target_ids: tuple[str, ...],
 ) -> RunResult:
     event = TraceEvent(
         sequence=0,
@@ -877,6 +899,136 @@ def _unreachable_result(
         ),
         validation_quality_gate_status="not_met" if risk_model is not None else None,
         configuration_validity=assess_configuration(request.configuration),
+        target_visits=tuple(
+            TargetVisitEvidence(
+                target_id=target_id,
+                required_ordinal=index,
+                pose=None,
+                dwell_completed=False,
+                status="unreachable",
+            )
+            for index, target_id in enumerate(target_ids)
+        ),
+    )
+
+
+def _target_visit_evidence(
+    target_ids: tuple[str, ...],
+    observations: list[InspectionObservation],
+    outcome: MissionOutcome,
+) -> tuple[TargetVisitEvidence, ...]:
+    incomplete_status: Literal[
+        "not_visited_timeout", "not_visited_collision", "unreachable"
+    ]
+    if outcome == "timed_out":
+        incomplete_status = "not_visited_timeout"
+    elif outcome == "collision":
+        incomplete_status = "not_visited_collision"
+    else:
+        incomplete_status = "unreachable"
+    return tuple(
+        TargetVisitEvidence(
+            target_id=target_id,
+            required_ordinal=index,
+            pose=(observations[index].pose if index < len(observations) else None),
+            dwell_completed=index < len(observations),
+            status=("captured" if index < len(observations) else incomplete_status),
+            observation_sequence=(index if index < len(observations) else None),
+        )
+        for index, target_id in enumerate(target_ids)
+    )
+
+
+def _target_setup_failure(
+    request: RunRequest,
+    scenario: Scenario,
+    target_ids: tuple[str, ...],
+    outcome: Literal["target_not_found", "target_ambiguous"],
+    failed_target_id: str,
+) -> RunResult:
+    terminal = TraceEvent(
+        sequence=0,
+        simulated_time_s=0.0,
+        phase="setup_failed",
+        kind="terminal",
+        pose=scenario.initial_pose,
+        linear_velocity_mps=0.0,
+        angular_velocity_radps=0.0,
+        detail=f"multi-target setup ended with {outcome}",
+    )
+    statuses = tuple(
+        TargetVisitEvidence(
+            target_id=target_id,
+            required_ordinal=index,
+            pose=None,
+            dwell_completed=False,
+            status=(
+                outcome
+                if target_id == failed_target_id
+                else "not_visited_setup_failure"
+            ),
+        )
+        for index, target_id in enumerate(target_ids)
+    )
+    return RunResult(
+        run_id=str(uuid.uuid4()),
+        request=request,
+        trace=(terminal,),
+        observations=(),
+        mission_outcome=outcome,
+        test_verdict=("passed" if request.expected_mission_outcome == outcome else "failed"),
+        terminal_reason=f"multi-target setup ended with {outcome}",
+        configuration_validity=assess_configuration(request.configuration),
+        target_visits=statuses,
+    )
+
+
+def _resolve_mission_targets(
+    scenario: Scenario,
+    target_ids: tuple[str, ...],
+    *,
+    grounded_target_id: str | None,
+) -> tuple[
+    tuple[tuple[str, Pose], ...],
+    tuple[Literal["target_not_found", "target_ambiguous"], str] | None,
+]:
+    built_in = (
+        {}
+        if scenario.scenario_version.startswith("scene-")
+        else {
+            "preset-storage-container": scenario.inspection_pose,
+            "secondary-inspection-point": Pose(6.5, 1.0, math.pi / 2),
+        }
+    )
+    resolved: list[tuple[str, Pose]] = []
+    for target_id in target_ids:
+        matches: tuple[Pose, ...]
+        if grounded_target_id is not None and target_id == grounded_target_id:
+            matches = (scenario.inspection_pose,)
+        elif target_id in built_in:
+            matches = (built_in[target_id],)
+        else:
+            normalized = target_id.strip().lower().replace("-", " ")
+            visual_matches = tuple(
+                visual_object
+                for visual_object in scenario.visual_objects
+                if visual_object.object_id == target_id
+                or visual_object.label.lower() == normalized
+            )
+            matches = tuple(_visual_inspection_pose(item) for item in visual_matches)
+        if not matches:
+            return (), ("target_not_found", target_id)
+        if len(matches) > 1:
+            return (), ("target_ambiguous", target_id)
+        resolved.append((target_id, matches[0]))
+    return tuple(resolved), None
+
+
+def _visual_inspection_pose(visual_object: VisualObject) -> Pose:
+    return Pose(
+        max(0.25, visual_object.x_min_m - 0.5),
+        (visual_object.y_min_m + visual_object.y_max_m) / 2,
+        0.0,
     )
 
 

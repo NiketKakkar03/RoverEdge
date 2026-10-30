@@ -549,6 +549,64 @@ describe("mission replay application", () => {
     );
   });
 
+  test("runs an ordered multi-target mission and displays per-target progress", async () => {
+    const multiResult: RunResult = {
+      ...result,
+      request: {
+        ...result.request,
+        target: {
+          kind: "multi_target_fixture",
+          target_ids: ["preset-storage-container", "secondary-inspection-point"],
+        },
+      },
+      target_visits: [
+        {
+          target_id: "preset-storage-container",
+          required_ordinal: 0,
+          pose: { x_m: 5.5, y_m: 3, heading_rad: 0 },
+          dwell_completed: true,
+          status: "captured",
+          observation_sequence: 0,
+        },
+        {
+          target_id: "secondary-inspection-point",
+          required_ordinal: 1,
+          pose: null,
+          dwell_completed: false,
+          status: "not_visited_timeout",
+          observation_sequence: null,
+        },
+      ],
+      mission_outcome: "timed_out",
+      test_verdict: "passed",
+    };
+    const run = vi.fn(async () => multiResult);
+    const api: RoverEdgeApi = { getScenarios: async () => [scenario], run };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector("[data-action='multi-target']")!);
+
+    await waitFor(() =>
+      expect(run).toHaveBeenCalledWith({
+        ...scenario.default_run_request,
+        target: {
+          kind: "multi_target_fixture",
+          target_ids: ["preset-storage-container", "secondary-inspection-point"],
+        },
+      }),
+    );
+    expect(root.querySelector("[data-field='target-visits']")?.textContent).toContain(
+      "preset-storage-container: captured",
+    );
+    expect(root.querySelector("[data-field='target-visits']")?.textContent).toContain(
+      "secondary-inspection-point: not_visited_timeout",
+    );
+    expect(root.querySelector("[data-field='outcome']")?.textContent).toBe("timed_out");
+  });
+
   test("requests the learned controller and displays its model evidence", async () => {
     const learnedResult: RunResult = {
       ...result,
