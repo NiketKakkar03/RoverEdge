@@ -1,0 +1,46 @@
+{
+  "schema": "roveredge-held-out-protocol-v8",
+  "approval_status": "pending_quality_threshold_review",
+  "execution_status": "not_run",
+  "supersedes": "artifacts/issue-22/proposed-held-out-protocol-v7.json",
+  "frozen_candidate_inputs": {
+    "held_out_manifest_path": "artifacts/issue-22/held-out-manifest-v8.json",
+    "held_out_manifest_file_sha256": "6eefc20220e6d43f7a39b6bc525e7a5ace9428c1fe2e245742c7f3c714948e91",
+    "final_test_families": ["route-final-refresh7-family-00", "route-final-refresh7-family-01", "route-final-refresh7-family-02"],
+    "final_test_split_sha256": "39b0d4f827c6789fab650402c700e5d1783eb99de704105f3924652cc871961b",
+    "model_artifact_path": "artifacts/issue-22/risk-model-v2.json",
+    "model_artifact_file_sha256": "8323d43e1ca7b9c78e3eec135e54d426869f09fe909682631ff491f4d66d14ce",
+    "model_sha256": "2ea59b362c2eb275608b72874ed6f9397c79be78829840faf649fe12bd735eee",
+    "validation_report_path": "artifacts/issue-22/validation-candidate-v2.json",
+    "validation_report_file_sha256": "8b2386efac784f76aa143922edc75816b37ff2a7971ef2b426846e73a697fa9f",
+    "risk_cutoff": 0.005,
+    "selection_policy_version": "learned-risk-plus-sensor-stopping-v2",
+    "safety_envelope_version": "sensor-stopping-v2",
+    "mission_scenario_generator_version": "held-out-mission-scenario-generator-v8",
+    "parallel_runtime": "persistent-model-owned-worker-pool-v1",
+    "native_planning_clock": "std::chrono::steady_clock",
+    "native_planning_policy": "macOS THREAD_TIME_CONSTRAINT_POLICY accepted",
+    "execution_exclusivity": "single-writer advisory lock required",
+    "native_isolation": "fresh spawned worker per measured run; supervisor writes evidence after return"
+  },
+  "acceptance_criteria": {
+    "maximum_false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3,
+    "numerical_tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(native naive)",
+    "maximum_command_disagreements": 0,
+    "native_pacing_overrun_limit_s": 0.02
+  },
+  "scheduled_work": {
+    "virtual_runs": 120,
+    "native_closed_loop_runs": 60,
+    "saved_input_batches_per_backend_per_repetition": 1000,
+    "saved_input_repetitions": 3
+  },
+  "preflight": "Before final access, run the complete 120-second non-final isolated native mission on every backend with v2 model/policy; require 2400 planning ticks, zero pacing overruns and disagreements, accepted time policy, and distinct cleanly exited workers.",
+  "stopping_rules": [
+    "No outcome-based early stopping.",
+    "Stop for invalid evidence, drift, infrastructure failure, failed prerequisites, concurrent writer detection, or user interruption.",
+    "Retain every completed artifact and do not tune from final results."
+  ]
+}

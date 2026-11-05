@@ -1,12 +1,23 @@
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
 #include <vector>
+
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#include <mach/mach_time.h>
+#include <mach/thread_policy.h>
+#include <pthread/qos.h>
+#endif
 
 #if ROVEREDGE_HAS_ACCELERATE
 #include <Accelerate/Accelerate.h>
@@ -201,6 +212,116 @@ void blocked_matmul_into(const Matrix& left, const Matrix& right, Matrix& output
   }
 }
 
+class ParallelBlockedWorkerPool {
+ public:
+  explicit ParallelBlockedWorkerPool(std::size_t worker_count) : worker_count_(worker_count) {
+    workers_.reserve(worker_count_);
+    for (std::size_t worker = 0; worker < worker_count_; ++worker) {
+      workers_.emplace_back([this, worker] { run_worker(worker); });
+    }
+  }
+
+  ParallelBlockedWorkerPool(const ParallelBlockedWorkerPool&) = delete;
+  ParallelBlockedWorkerPool& operator=(const ParallelBlockedWorkerPool&) = delete;
+
+  ~ParallelBlockedWorkerPool() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stopping_ = true;
+    }
+    work_ready_.notify_all();
+    workers_.clear();
+  }
+
+  void multiply_into(const Matrix& left, const Matrix& right, Matrix& output,
+                     std::size_t block_size) {
+    if (left.empty() || right.empty() || left.front().size() != right.size() ||
+        output.size() != left.size() || output.front().size() != right.front().size()) {
+      throw std::invalid_argument("matrix workspace dimensions do not align");
+    }
+    for (auto& row : output) std::fill(row.begin(), row.end(), 0.0F);
+
+    std::unique_lock<std::mutex> lock(mutex_);
+    left_ = &left;
+    right_ = &right;
+    output_ = &output;
+    block_size_ = block_size;
+    active_workers_ = std::min(worker_count_, left.size());
+    completed_workers_ = 0;
+    ++generation_;
+    work_ready_.notify_all();
+    work_complete_.wait(lock, [this] { return completed_workers_ == active_workers_; });
+  }
+
+ private:
+  void run_worker(std::size_t worker_index) {
+    std::size_t observed_generation = 0;
+    for (;;) {
+      const Matrix* left;
+      const Matrix* right;
+      Matrix* output;
+      std::size_t block_size;
+      std::size_t row_begin;
+      std::size_t row_end;
+      {
+        std::unique_lock<std::mutex> lock(mutex_);
+        work_ready_.wait(lock, [this, observed_generation] {
+          return stopping_ || generation_ != observed_generation;
+        });
+        if (stopping_) return;
+        observed_generation = generation_;
+        if (worker_index >= active_workers_) continue;
+        left = left_;
+        right = right_;
+        output = output_;
+        block_size = block_size_;
+        const auto rows_per_worker = (left->size() + active_workers_ - 1) / active_workers_;
+        row_begin = worker_index * rows_per_worker;
+        row_end = std::min(row_begin + rows_per_worker, left->size());
+      }
+
+      for (std::size_t row_block = row_begin; row_block < row_end; row_block += block_size) {
+        for (std::size_t inner_block = 0; inner_block < right->size(); inner_block += block_size) {
+          for (std::size_t column_block = 0; column_block < right->front().size();
+               column_block += block_size) {
+            const auto block_row_end = std::min(row_block + block_size, row_end);
+            const auto inner_end = std::min(inner_block + block_size, right->size());
+            const auto column_end = std::min(column_block + block_size, right->front().size());
+            for (std::size_t row = row_block; row < block_row_end; ++row) {
+              for (std::size_t inner = inner_block; inner < inner_end; ++inner) {
+                const float left_value = (*left)[row][inner];
+                for (std::size_t column = column_block; column < column_end; ++column) {
+                  (*output)[row][column] += left_value * (*right)[inner][column];
+                }
+              }
+            }
+          }
+        }
+      }
+
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        ++completed_workers_;
+      }
+      work_complete_.notify_one();
+    }
+  }
+
+  const std::size_t worker_count_;
+  std::vector<std::jthread> workers_;
+  std::mutex mutex_;
+  std::condition_variable work_ready_;
+  std::condition_variable work_complete_;
+  const Matrix* left_ = nullptr;
+  const Matrix* right_ = nullptr;
+  Matrix* output_ = nullptr;
+  std::size_t block_size_ = 0;
+  std::size_t active_workers_ = 0;
+  std::size_t completed_workers_ = 0;
+  std::size_t generation_ = 0;
+  bool stopping_ = false;
+};
+
 Matrix transpose(const Matrix& source) {
   validate_matrix(source, "weight matrix");
   Matrix result(source.front().size(), std::vector<float>(source.size()));
@@ -291,6 +412,9 @@ class NativeRiskModel {
       accelerate_left_.resize(8 * 64);
       accelerate_output_.resize(8 * 64);
     }
+    if (backend_ == "native-parallel-blocked") {
+      parallel_worker_pool_ = std::make_unique<ParallelBlockedWorkerPool>(worker_count_);
+    }
   }
 
   py::dict evaluate(const Matrix& batch) {
@@ -329,7 +453,7 @@ class NativeRiskModel {
   void multiply_into(const Matrix& left, const Matrix& right, Matrix& output,
                      std::size_t layer_index) {
     if (backend_ == "native-parallel-blocked") {
-      parallel_blocked_matmul_into(left, right, output, block_size_, worker_count_);
+      parallel_worker_pool_->multiply_into(left, right, output, block_size_);
     } else if (backend_ == "native-blocked") {
       blocked_matmul_into(left, right, output, block_size_);
     } else if (backend_ == "native-accelerate") {
@@ -368,10 +492,72 @@ class NativeRiskModel {
   std::vector<float> scores_;
   std::vector<float> accelerate_left_;
   std::vector<float> accelerate_output_;
+  std::unique_ptr<ParallelBlockedWorkerPool> parallel_worker_pool_;
   std::string backend_;
   std::size_t block_size_;
   std::size_t worker_count_;
   std::mutex workspace_mutex_;
+};
+
+class NativePlanningPacer {
+ public:
+  NativePlanningPacer() : started_(Clock::now()) {
+#if defined(__APPLE__)
+    qos_status_ = pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0) == 0
+                      ? "user_interactive"
+                      : "request_failed";
+    mach_timebase_info_data_t timebase{};
+    mach_timebase_info(&timebase);
+    const auto to_absolute = [&timebase](std::uint64_t nanoseconds) {
+      return static_cast<std::uint32_t>(
+          nanoseconds * timebase.denom / timebase.numer);
+    };
+    thread_time_constraint_policy_data_t policy{
+        to_absolute(50'000'000), to_absolute(10'000'000),
+        to_absolute(20'000'000), true};
+    const auto status = thread_policy_set(
+        mach_thread_self(), THREAD_TIME_CONSTRAINT_POLICY,
+        reinterpret_cast<thread_policy_t>(&policy),
+        THREAD_TIME_CONSTRAINT_POLICY_COUNT);
+    realtime_status_ = status == KERN_SUCCESS ? "time_constraint_accepted"
+                                               : "time_constraint_rejected";
+#else
+    qos_status_ = "not_available";
+    realtime_status_ = "not_available";
+#endif
+  }
+
+  py::dict wait_until(double elapsed_seconds) {
+    if (!std::isfinite(elapsed_seconds) || elapsed_seconds < 0.0) {
+      throw std::invalid_argument("planning deadline must be finite and nonnegative");
+    }
+    const auto target = started_ + std::chrono::duration_cast<Clock::duration>(
+                                       std::chrono::duration<double>(elapsed_seconds));
+    const auto spin_margin = std::chrono::milliseconds(2);
+    const auto now = Clock::now();
+    if (now + spin_margin < target) {
+      std::this_thread::sleep_until(target - spin_margin);
+    }
+    while (Clock::now() < target) {
+      std::this_thread::yield();
+    }
+    const auto completed = Clock::now();
+    const double overrun = std::max(
+        0.0, std::chrono::duration<double>(completed - target).count());
+    py::gil_scoped_acquire acquire;
+    py::dict result;
+    result["overrun_s"] = overrun;
+    result["qos"] = qos_status_;
+    result["realtime_policy"] = realtime_status_;
+    result["clock"] = "std::chrono::steady_clock";
+    return result;
+  }
+
+ private:
+  using Clock = std::chrono::steady_clock;
+  Clock::time_point started_;
+  std::string qos_status_;
+  std::string realtime_status_;
 };
 
 }  // namespace
@@ -409,4 +595,8 @@ PYBIND11_MODULE(_native_runtime, module) {
            py::arg("backend") = "native-naive", py::arg("block_size") = 16,
            py::arg("worker_count") = 1)
       .def("evaluate", &NativeRiskModel::evaluate, py::call_guard<py::gil_scoped_release>());
+  py::class_<NativePlanningPacer>(module, "NativePlanningPacer")
+      .def(py::init<>())
+      .def("wait_until", &NativePlanningPacer::wait_until, py::arg("elapsed_seconds"),
+           py::call_guard<py::gil_scoped_release>());
 }

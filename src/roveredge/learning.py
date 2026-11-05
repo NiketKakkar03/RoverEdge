@@ -10,6 +10,11 @@ import torch
 
 from .geometry import first_swept_collision, ray_distance
 from .models import Pose, RunConfiguration
+from .safety import (
+    DEFAULT_SAFETY_ENVELOPE,
+    SafetyEnvelopeConfiguration,
+    evaluate_motion_candidate,
+)
 from .scenarios import Obstacle, Scenario
 
 
@@ -87,7 +92,7 @@ class Normalization:
 
 @dataclass(frozen=True)
 class DatasetSplit:
-    split: Literal["train", "validation"]
+    split: Literal["train", "validation", "final_test"]
     family_ids: tuple[str, ...]
     features: tuple[tuple[float, ...], ...]
     labels: tuple[int, ...]
@@ -168,19 +173,17 @@ class DatasetManifest:
 
 def build_default_manifest() -> DatasetManifest:
     return DatasetManifest(
-        version="risk-dataset-v1",
-        train_families=tuple(f"train-family-{index:02d}" for index in range(8)),
-        validation_families=tuple(f"validation-family-{index:02d}" for index in range(3)),
-        final_test_families=tuple(f"final-family-{index:02d}" for index in range(3)),
-        samples_per_family=64,
+        version="risk-dataset-v2",
+        train_families=tuple(f"route-train-family-{index:02d}" for index in range(8)),
+        validation_families=tuple(f"route-validation-family-{index:02d}" for index in range(3)),
+        final_test_families=tuple(f"route-final-family-{index:02d}" for index in range(3)),
+        samples_per_family=256,
         candidates_per_state=8,
         final_test_status="untouched",
     )
 
 
-def build_feature_vector(
-    state: LearningState, candidate: MotionCandidate
-) -> tuple[float, ...]:
+def build_feature_vector(state: LearningState, candidate: MotionCandidate) -> tuple[float, ...]:
     return (
         *state.range_readings_m,
         state.linear_velocity_mps,
@@ -240,9 +243,7 @@ def collision_label(
 def select_candidate(
     risks: tuple[float, ...], progress_scores: tuple[float, ...], cutoff: float
 ) -> CandidateSelection:
-    if len(risks) != len(CANDIDATE_COMMANDS) or len(progress_scores) != len(
-        CANDIDATE_COMMANDS
-    ):
+    if len(risks) != len(CANDIDATE_COMMANDS) or len(progress_scores) != len(CANDIDATE_COMMANDS):
         raise ValueError("one risk and progress value is required for every candidate")
     acceptable = [index for index, risk in enumerate(risks) if risk <= cutoff]
     if not acceptable:
@@ -253,15 +254,52 @@ def select_candidate(
             progress_score=progress_scores[0],
             reason="no candidate below the risk cutoff; braking",
         )
-    selected = min(
-        acceptable, key=lambda index: (-progress_scores[index], risks[index], index)
-    )
+    selected = min(acceptable, key=lambda index: (-progress_scores[index], risks[index], index))
     return CandidateSelection(
         candidate_index=selected,
         command=CANDIDATE_COMMANDS[selected],
         risk=risks[selected],
         progress_score=progress_scores[selected],
         reason="acceptable candidate with maximum kinematic progress",
+    )
+
+
+def select_safe_candidate(
+    risks: tuple[float, ...],
+    progress_scores: tuple[float, ...],
+    cutoff: float,
+    state: LearningState,
+    safety_configuration: SafetyEnvelopeConfiguration = DEFAULT_SAFETY_ENVELOPE,
+) -> CandidateSelection:
+    """Select by learned risk and progress after deterministic command admission."""
+    if len(risks) != len(CANDIDATE_COMMANDS) or len(progress_scores) != len(CANDIDATE_COMMANDS):
+        raise ValueError("one risk and progress value is required for every candidate")
+    admissible = tuple(
+        evaluate_motion_candidate(
+            state.range_readings_m,
+            state.linear_velocity_mps,
+            candidate.linear_velocity_mps,
+            candidate.angular_velocity_radps,
+            safety_configuration,
+        ).admissible
+        for candidate in CANDIDATE_COMMANDS
+    )
+    acceptable = [index for index, risk in enumerate(risks) if risk <= cutoff and admissible[index]]
+    if not acceptable:
+        return CandidateSelection(
+            candidate_index=0,
+            command=CANDIDATE_COMMANDS[0],
+            risk=risks[0],
+            progress_score=progress_scores[0],
+            reason="no candidate passed learned risk and sensor-stopping-v1; braking",
+        )
+    selected = min(acceptable, key=lambda index: (-progress_scores[index], risks[index], index))
+    return CandidateSelection(
+        candidate_index=selected,
+        command=CANDIDATE_COMMANDS[selected],
+        risk=risks[selected],
+        progress_score=progress_scores[selected],
+        reason="candidate passed learned risk and sensor-stopping-v1",
     )
 
 
@@ -274,19 +312,45 @@ def candidate_progress_score(
     start_bearing = math.atan2(waypoint_y_m, waypoint_x_m)
     end_x = candidate.linear_velocity_mps * math.cos(candidate.angular_velocity_radps)
     end_y = candidate.linear_velocity_mps * math.sin(candidate.angular_velocity_radps)
-    distance_progress = start_distance - math.hypot(
-        waypoint_x_m - end_x, waypoint_y_m - end_y
-    )
-    alignment_progress = abs(start_bearing) - abs(
-        _normalize_angle(start_bearing - candidate.angular_velocity_radps)
-    )
+    distance_progress = start_distance - math.hypot(waypoint_x_m - end_x, waypoint_y_m - end_y)
+    alignment_progress = abs(start_bearing) - abs(_normalize_angle(start_bearing - candidate.angular_velocity_radps))
     return distance_progress + 0.1 * alignment_progress
 
 
 def generate_dataset(
-    manifest: DatasetManifest, split: Literal["train", "validation"]
+    manifest: DatasetManifest, split: Literal["train", "validation", "final_test"]
 ) -> DatasetSplit:
-    family_ids = manifest.train_families if split == "train" else manifest.validation_families
+    """Generate a training or validation split; held-out access is explicitly gated."""
+    if split == "final_test":
+        from .final_evaluation import (
+            require_held_out_v5_execution_authorization,
+            require_held_out_v7_execution_authorization,
+            require_held_out_v8_execution_authorization,
+        )
+
+        if any(
+            family.startswith("route-final-refresh7-family-")
+            for family in manifest.final_test_families
+        ):
+            require_held_out_v8_execution_authorization()
+            from .held_out_scenarios_v8 import FAMILIES as V8_FAMILIES
+
+            if manifest.final_test_families != V8_FAMILIES:
+                raise PermissionError("held-out v8 family set drifted")
+        elif any(
+            family.startswith("route-final-refresh6-family-")
+            for family in manifest.final_test_families
+        ):
+            require_held_out_v7_execution_authorization()
+        else:
+            require_held_out_v5_execution_authorization()
+    family_ids = (
+        manifest.train_families
+        if split == "train"
+        else manifest.validation_families
+        if split == "validation"
+        else manifest.final_test_families
+    )
     features: list[tuple[float, ...]] = []
     labels: list[int] = []
     configuration = RunConfiguration()
@@ -346,17 +410,22 @@ def generate_dataset(
                 )
                 for index in range(16)
             )
-            waypoint_x = generator.uniform(-4.5, 4.5)
-            waypoint_y = generator.uniform(-4.5, 4.5)
-            if math.hypot(waypoint_x, waypoint_y) < 0.5:
-                waypoint_x += math.copysign(0.5, waypoint_x or 1.0)
+            # A planning waypoint is a local route-following target.  The v1 corpus
+            # sampled it independently of the rover heading, so many states asked a
+            # forward-only command set to make negative progress.  This v2 corpus
+            # samples reachable forward waypoints while retaining lateral recovery
+            # variation; it does not expose obstacle geometry as a learned feature.
+            waypoint_x = generator.uniform(0.75, 4.5)
+            waypoint_y = generator.uniform(-1.5, 1.5)
             state = LearningState(
                 range_readings_m=ranges,
                 linear_velocity_mps=linear_velocity,
                 angular_velocity_radps=angular_velocity,
                 waypoint_x_rover_m=waypoint_x,
                 waypoint_y_rover_m=waypoint_y,
-                previous_linear_command_mps=generator.choice(CANDIDATE_COMMANDS).linear_velocity_mps,
+                previous_linear_command_mps=generator.choice(
+                    CANDIDATE_COMMANDS
+                ).linear_velocity_mps,
                 previous_angular_command_radps=generator.choice(
                     CANDIDATE_COMMANDS
                 ).angular_velocity_radps,
@@ -487,9 +556,7 @@ def load_risk_model(path: PathLike) -> RiskModelArtifact:
         normalization=normalization,
         hidden_activation=document["hidden_activation"],
         output_activation=document["output_activation"],
-        weights=tuple(
-            tuple(tuple(row) for row in layer) for layer in document["weights"]
-        ),
+        weights=tuple(tuple(tuple(row) for row in layer) for layer in document["weights"]),
         biases=tuple(tuple(layer) for layer in document["biases"]),
         risk_cutoff=float(document["risk_cutoff"]),
         training_seed=int(document["training_seed"]),
@@ -504,10 +571,10 @@ def load_risk_model(path: PathLike) -> RiskModelArtifact:
 
 
 def _validate_artifact(artifact: RiskModelArtifact) -> None:
-    if (
-        artifact.artifact_version != "risk-model-v1"
-        or artifact.dataset_version != "risk-dataset-v1"
-    ):
+    if artifact.artifact_version not in {
+        "risk-model-v1",
+        "risk-model-v2",
+    } or artifact.dataset_version not in {"risk-dataset-v1", "risk-dataset-v2"}:
         raise ValueError("unsupported risk model artifact or dataset version")
     if artifact.modal_execution != "not_used":
         raise ValueError("unsupported risk model execution provenance")
@@ -529,8 +596,7 @@ def _validate_artifact(artifact: RiskModelArtifact) -> None:
     if not all(math.isfinite(value) for value in artifact.normalization.mean):
         raise ValueError("risk model normalization must be finite")
     if not all(
-        math.isfinite(value) and value > 0
-        for value in artifact.normalization.standard_deviation
+        math.isfinite(value) and value > 0 for value in artifact.normalization.standard_deviation
     ):
         raise ValueError("risk model normalization scales must be finite and positive")
     expected_shapes = ((64, 24), (32, 64), (1, 32))
@@ -584,8 +650,20 @@ def _select_cutoff(
     features: tuple[tuple[float, ...], ...],
 ) -> tuple[float, ValidationEvidence]:
     ranked: list[tuple[tuple[int, int, float, float], float, ValidationEvidence]] = []
-    for step in range(1, 20):
-        cutoff = step * 0.05
+    cutoff_candidates = (
+        0.000001,
+        0.000002,
+        0.000005,
+        0.00001,
+        0.00002,
+        0.00005,
+        0.0001,
+        0.0002,
+        0.0005,
+        *tuple(step * 0.001 for step in range(1, 51)),
+        *tuple(step * 0.05 for step in range(2, 20)),
+    )
+    for cutoff in cutoff_candidates:
         false_negatives = 0
         unnecessary_stops = 0
         selected_progress: list[float] = []
@@ -597,10 +675,19 @@ def _select_cutoff(
                 candidate_progress_score(row[18], row[19], candidate)
                 for row, candidate in zip(state_features, CANDIDATE_COMMANDS, strict=True)
             )
-            selection = select_candidate(state_risks, progress, cutoff)
+            first = state_features[0]
+            state = LearningState(
+                range_readings_m=tuple(first[:16]),
+                linear_velocity_mps=first[16],
+                angular_velocity_radps=first[17],
+                waypoint_x_rover_m=first[18],
+                waypoint_y_rover_m=first[19],
+                previous_linear_command_mps=first[22],
+                previous_angular_command_radps=first[23],
+            )
+            selection = select_safe_candidate(state_risks, progress, cutoff, state)
             false_negatives += (
-                selection.reason == "acceptable candidate with maximum kinematic progress"
-                and state_labels[selection.candidate_index] == 1
+                selection.candidate_index != 0 and state_labels[selection.candidate_index] == 1
             )
             unnecessary_stops += selection.candidate_index == 0 and any(
                 label == 0 and candidate.linear_velocity_mps > 0

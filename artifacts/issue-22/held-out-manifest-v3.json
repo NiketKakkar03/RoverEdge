@@ -1,0 +1,17 @@
+{
+  "schema": "roveredge-held-out-family-manifest-v3",
+  "status": "untouched",
+  "generator_version": "held-out-mission-scenario-generator-v3",
+  "families": [
+    "route-final-refresh2-family-00",
+    "route-final-refresh2-family-01",
+    "route-final-refresh2-family-02"
+  ],
+  "family_split_sha256": "d67d861f0f4683da206bd9afe2fdc56718492d01c4ee0a9401b30d865e92ff3b",
+  "samples_per_family": 256,
+  "candidates_per_state": 8,
+  "supersedes_consumed_manifests": [
+    "artifacts/issue-8/dataset-manifest.json#final_test_families",
+    "artifacts/issue-22/held-out-manifest-v2.json"
+  ]
+}

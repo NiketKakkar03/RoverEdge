@@ -124,15 +124,12 @@ def test_native_paced_mission_continues_while_measured_inference_completes() -> 
     assert result.inference_summary["execution_mode"] == "native_paced"
     assert result.inference_summary["timing_provenance"] == "measured"
     assert any(event.kind == "pose_sample" for event in result.trace)
-    completions = [
-        event for event in result.trace if event.inference_event_kind == "completed"
-    ]
+    completions = [event for event in result.trace if event.inference_event_kind == "completed"]
     assert completions
     assert all(event.timing_provenance == "measured" for event in completions)
     assert all(event.measured_execution_s is not None for event in completions)
     assert any(
-        event.inference_event_kind == "deadline_missed"
-        and event.timing_provenance == "measured"
+        event.inference_event_kind == "deadline_missed" and event.timing_provenance == "measured"
         for event in result.trace
     )
     decisions = [event for event in result.trace if event.kind == "control_decision"]
@@ -142,6 +139,28 @@ def test_native_paced_mission_continues_while_measured_inference_completes() -> 
     assert all(event.episode_id is not None for event in decisions)
     assert all(event.event_candidate_set_id is not None for event in decisions)
     assert all(event.event_model_sha256 == result.model_sha256 for event in decisions)
+
+
+def test_native_paced_mission_stays_within_frozen_pacing_limit() -> None:
+    base = physical_run_request("preset-open-v2")
+    request = replace(
+        base,
+        configuration=replace(
+            base.configuration,
+            controller_kind="learned_collision_risk",
+            inference_backend="native-naive",
+            execution_mode="native_paced",
+            timeout_s=20.0,
+            pacing_overrun_limit_s=0.02,
+        ),
+        expected_mission_outcome="timed_out",
+    )
+
+    result = run_experiment(request)
+
+    assert result.inference_summary is not None
+    assert result.inference_summary["pacing_overruns"] == 0
+    assert result.inference_summary["maximum_pacing_overrun_s"] <= 0.02
 
 
 def test_native_blocked_learned_mission_records_backend_configuration() -> None:
@@ -258,9 +277,7 @@ def test_virtual_fifo_mission_replays_modeled_prediction_age() -> None:
     assert decisions
     assert all(event.observation_age_s == 0.05 for event in decisions)
     assert all(event.timing_provenance == "modeled" for event in decisions)
-    inference_events = [
-        event for event in result.trace if event.inference_event_kind is not None
-    ]
+    inference_events = [event for event in result.trace if event.inference_event_kind is not None]
     first_completion = next(
         index
         for index, event in enumerate(inference_events)
@@ -312,9 +329,7 @@ def test_delayed_virtual_fifo_records_overflow_and_expiry() -> None:
     assert result.inference_summary is not None
     assert result.inference_summary["overflow"] > 0
     assert result.inference_summary["expired"] > 0
-    assert any(
-        event.inference_event_kind == "overflow" for event in result.trace
-    )
+    assert any(event.inference_event_kind == "overflow" for event in result.trace)
     assert any(event.inference_event_kind == "expired" for event in result.trace)
 
 

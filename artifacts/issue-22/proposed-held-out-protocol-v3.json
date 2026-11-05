@@ -1,0 +1,47 @@
+{
+  "schema": "roveredge-held-out-protocol-v3",
+  "approval_status": "approved_by_user_continuation",
+  "execution_status": "not_run",
+  "reason": "Fresh independent evaluation after v2 pacing invalidity was remediated by native monotonic planning and accepted macOS time-constraint scheduling.",
+  "frozen_candidate_inputs": {
+    "dataset_manifest_file_sha256": "c3144ae012081848fd22aeb8ac612ab6d178eeb8b94dc862255c40f53a18bfee",
+    "held_out_manifest_path": "artifacts/issue-22/held-out-manifest-v3.json",
+    "held_out_manifest_file_sha256": "773b4709b3ea4d91566bcc75c7c92982f93fe8aa15aae07ebf47994d92b34391",
+    "final_test_families": [
+      "route-final-refresh2-family-00",
+      "route-final-refresh2-family-01",
+      "route-final-refresh2-family-02"
+    ],
+    "final_test_split_sha256": "d67d861f0f4683da206bd9afe2fdc56718492d01c4ee0a9401b30d865e92ff3b",
+    "model_artifact_file_sha256": "2812484a022f541bbb3ede63c1a63e58bf986f73c500f606c5dbf351ba88f005",
+    "model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
+    "risk_cutoff": 0.0001,
+    "selection_policy_version": "learned-risk-plus-sensor-stopping-v1",
+    "safety_envelope_version": "sensor-stopping-v1",
+    "mission_scenario_generator_version": "held-out-mission-scenario-generator-v3",
+    "native_planning_clock": "std::chrono::steady_clock",
+    "native_planning_policy": "macOS THREAD_TIME_CONSTRAINT_POLICY accepted"
+  },
+  "acceptance_criteria": {
+    "maximum_false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3,
+    "numerical_tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(native naive)",
+    "maximum_command_disagreements": 0,
+    "native_pacing_overrun_limit_s": 0.02
+  },
+  "scheduled_work": {
+    "virtual_runs": 120,
+    "native_closed_loop_runs": 60,
+    "saved_input_batches_per_backend_per_repetition": 1000,
+    "saved_input_repetitions": 3
+  },
+  "ordering": "Six virtual conditions in declared order with indices 0..19 and family[index mod 3], then family/repetition/backend native order, then saved-input replay.",
+  "preflight": "All four backends completed 30 non-final seconds with accepted time-constraint scheduling, zero pacing overruns, and zero command disagreements.",
+  "stopping_rules": [
+    "Do not stop for favorable or unfavorable results.",
+    "Stop immediately for invalid evidence, configuration drift, infrastructure failure, or failed prerequisites.",
+    "Retain every completed result and failure.",
+    "Do not tune from final results."
+  ]
+}

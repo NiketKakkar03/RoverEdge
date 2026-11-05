@@ -1,22 +1,35 @@
 {
-  "examples": 1536,
-  "false_negatives": 17,
+  "examples": 6144,
+  "false_negatives": 0,
   "final_test_status": "untouched",
-  "mean_safe_progress_score": 0.19479061646234797,
+  "mean_safe_progress_score": 0.3339251055009594,
   "metric_definitions": {
     "false_negatives": "selected accepted commands whose rollout label is collision",
     "mean_safe_progress_score": "mean dimensionless distance-and-alignment progress score for safe selected commands",
     "unnecessary_stops": "brake selections where a moving collision-free candidate exists"
   },
-  "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
+  "model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
   "proposed_quality_requirements": {
     "false_negatives": 0,
     "maximum_unnecessary_stop_rate": 0.1,
     "minimum_mean_safe_progress_score": 0.3
   },
-  "quality_gate_status": "not_met",
-  "selected_risk_cutoff": 0.05,
-  "states": 192,
+  "quality_gate_status": "met",
+  "selected_risk_cutoff": 0.0001,
+  "selection_policy": {
+    "cutoff_selection_split": "validation",
+    "safety_envelope": {
+      "horizon_s": 1.0,
+      "max_braking_deceleration_mps2": 1.2,
+      "max_linear_acceleration_mps2": 0.8,
+      "rover_radius_m": 0.2,
+      "sparse_sensor_margin_m": 0.2,
+      "swept_ray_neighbors": 2,
+      "version": "sensor-stopping-v1"
+    },
+    "version": "learned-risk-plus-sensor-stopping-v1"
+  },
+  "states": 768,
   "training": {
     "device": "cpu",
     "epochs": 300,
@@ -30,5 +43,5 @@
     "seed": 20261028,
     "torch_version": "2.15.0"
   },
-  "unnecessary_stops": 2
+  "unnecessary_stops": 58
 }

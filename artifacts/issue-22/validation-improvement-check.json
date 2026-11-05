@@ -1,0 +1,42 @@
+{
+  "schema": "roveredge-validation-improvement-check-v3",
+  "checked_on": "2026-11-02",
+  "final_test_status": "untouched",
+  "acceptance_criteria": {
+    "maximum_false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3
+  },
+  "retired_v1_diagnosis": {
+    "oracle_mean_safe_progress_score": 0.21784286994174332,
+    "reason": "The v1 corpus sampled local waypoints independently of rover heading, while the candidate set is forward-oriented.",
+    "conclusion": "The 0.3 progress requirement was infeasible on v1 even with perfect risk labels; v1 final families are retired."
+  },
+  "v2_validation_only_result": {
+    "dataset_version": "risk-dataset-v2",
+    "states": 768,
+    "epochs": 300,
+    "seed": 20261028,
+    "risk_cutoff": 0.05,
+    "false_negatives": 57,
+    "unnecessary_stops": 23,
+    "mean_safe_progress_score": 0.40138211933415885,
+    "quality_gate_status": "not_met"
+  },
+  "composed_policy_validation_result": {
+    "selection_policy_version": "learned-risk-plus-sensor-stopping-v1",
+    "safety_envelope_version": "sensor-stopping-v1",
+    "dataset_version": "risk-dataset-v2",
+    "states": 768,
+    "epochs": 300,
+    "seed": 20261028,
+    "risk_cutoff": 0.0001,
+    "false_negatives": 0,
+    "unnecessary_stops": 58,
+    "unnecessary_stop_rate": 0.07552083333333333,
+    "mean_safe_progress_score": 0.3339251055009594,
+    "quality_gate_status": "met"
+  },
+  "result": "validation_gate_met",
+  "conclusion": "The composed learned-risk and deterministic sensor-stopping-v1 policy meets the proposed validation requirements. Final families remain untouched; Issue 22 still requires explicit protocol review and freezing before held-out execution."
+}

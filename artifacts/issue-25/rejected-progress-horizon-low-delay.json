@@ -1,0 +1,901 @@
+[
+  {
+    "scenario": "preset-open-v2",
+    "mode": "default",
+    "outcome": "completed",
+    "expected": "completed",
+    "verdict": "passed",
+    "inspections": 1,
+    "duration": 24.905,
+    "distance_m": 8.632512874283348,
+    "phases": {
+      "approaching_target": 1582,
+      "aligning_to_target": 1,
+      "stopping_for_inspection": 1,
+      "dwelling": 200,
+      "observation_captured": 1,
+      "returning_to_dock": 2316,
+      "aligning_at_dock": 879,
+      "completed": 1
+    },
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "preset-open-v2",
+    "mode": "learned_sync",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 4.608450002839992,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2401,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2401
+    },
+    "inference": null
+  },
+  {
+    "scenario": "preset-open-v2",
+    "mode": "fifo",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 5.071679996585881,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2400,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2400
+    },
+    "inference": {
+      "scheduled": 2401,
+      "admitted": 0,
+      "completed": 2400,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 2400,
+      "deadline_misses": 2400,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 2401,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  },
+  {
+    "scenario": "preset-open-v2",
+    "mode": "latest_pending",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 5.071679996585881,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2400,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2400
+    },
+    "inference": {
+      "scheduled": 2401,
+      "admitted": 0,
+      "completed": 2400,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 2400,
+      "deadline_misses": 2400,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 2401,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  },
+  {
+    "scenario": "preset-perception-v1",
+    "mode": "default",
+    "outcome": "completed",
+    "expected": "completed",
+    "verdict": "passed",
+    "inspections": 1,
+    "duration": 24.205,
+    "distance_m": 8.234387524186605,
+    "phases": {
+      "approaching_target": 1515,
+      "aligning_to_target": 1,
+      "stopping_for_inspection": 1,
+      "dwelling": 200,
+      "observation_captured": 1,
+      "returning_to_dock": 2247,
+      "aligning_at_dock": 875,
+      "completed": 1
+    },
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "preset-perception-v1",
+    "mode": "learned_sync",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 4.398450000504164,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2401,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2401
+    },
+    "inference": null
+  },
+  {
+    "scenario": "preset-perception-v1",
+    "mode": "fifo",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 4.87167999658588,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2400,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2400
+    },
+    "inference": {
+      "scheduled": 2401,
+      "admitted": 0,
+      "completed": 2400,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 2400,
+      "deadline_misses": 2400,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 2401,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  },
+  {
+    "scenario": "preset-perception-v1",
+    "mode": "latest_pending",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 4.87167999658588,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2400,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2400
+    },
+    "inference": {
+      "scheduled": 2401,
+      "admitted": 0,
+      "completed": 2400,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 2400,
+      "deadline_misses": 2400,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 2401,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  },
+  {
+    "scenario": "fixture-perception-shifted-v1",
+    "mode": "default",
+    "outcome": "completed",
+    "expected": "completed",
+    "verdict": "passed",
+    "inspections": 1,
+    "duration": 77.305,
+    "distance_m": 6.505838871619304,
+    "phases": {
+      "approaching_target": 6794,
+      "aligning_to_target": 230,
+      "stopping_for_inspection": 1,
+      "dwelling": 200,
+      "observation_captured": 1,
+      "returning_to_dock": 7498,
+      "aligning_at_dock": 736,
+      "completed": 1
+    },
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-perception-shifted-v1",
+    "mode": "learned_sync",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 0.20846000062923023,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2401,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2401
+    },
+    "inference": null
+  },
+  {
+    "scenario": "fixture-perception-shifted-v1",
+    "mode": "fifo",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 0.6983399975885539,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2400,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2400
+    },
+    "inference": {
+      "scheduled": 2401,
+      "admitted": 0,
+      "completed": 2400,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 2400,
+      "deadline_misses": 2400,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 2401,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  },
+  {
+    "scenario": "fixture-perception-shifted-v1",
+    "mode": "latest_pending",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 0.6983399975885539,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2400,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2400
+    },
+    "inference": {
+      "scheduled": 2401,
+      "admitted": 0,
+      "completed": 2400,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 2400,
+      "deadline_misses": 2400,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 2401,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  },
+  {
+    "scenario": "fixture-perception-absent-v1",
+    "mode": "default",
+    "outcome": "target_not_found",
+    "expected": "target_not_found",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-perception-absent-v1",
+    "mode": "learned_sync",
+    "outcome": "target_not_found",
+    "expected": "target_not_found",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-perception-absent-v1",
+    "mode": "fifo",
+    "outcome": "target_not_found",
+    "expected": "target_not_found",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-perception-absent-v1",
+    "mode": "latest_pending",
+    "outcome": "target_not_found",
+    "expected": "target_not_found",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-perception-ambiguous-v1",
+    "mode": "default",
+    "outcome": "target_ambiguous",
+    "expected": "target_ambiguous",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-perception-ambiguous-v1",
+    "mode": "learned_sync",
+    "outcome": "target_ambiguous",
+    "expected": "target_ambiguous",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-perception-ambiguous-v1",
+    "mode": "fifo",
+    "outcome": "target_ambiguous",
+    "expected": "target_ambiguous",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-perception-ambiguous-v1",
+    "mode": "latest_pending",
+    "outcome": "target_ambiguous",
+    "expected": "target_ambiguous",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "preset-narrow-v1",
+    "mode": "default",
+    "outcome": "completed",
+    "expected": "completed",
+    "verdict": "passed",
+    "inspections": 1,
+    "duration": 24.905,
+    "distance_m": 8.632512874283348,
+    "phases": {
+      "approaching_target": 1582,
+      "aligning_to_target": 1,
+      "stopping_for_inspection": 1,
+      "dwelling": 200,
+      "observation_captured": 1,
+      "returning_to_dock": 2316,
+      "aligning_at_dock": 879,
+      "completed": 1
+    },
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "preset-narrow-v1",
+    "mode": "learned_sync",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 1.0963999996820892,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2401,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2401
+    },
+    "inference": null
+  },
+  {
+    "scenario": "preset-narrow-v1",
+    "mode": "fifo",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 1.099749999762288,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2400,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2400
+    },
+    "inference": {
+      "scheduled": 2401,
+      "admitted": 0,
+      "completed": 2400,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 2400,
+      "deadline_misses": 2400,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 2401,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  },
+  {
+    "scenario": "preset-narrow-v1",
+    "mode": "latest_pending",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 1.099749999762288,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2400,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2400
+    },
+    "inference": {
+      "scheduled": 2401,
+      "admitted": 0,
+      "completed": 2400,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 2400,
+      "deadline_misses": 2400,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 2401,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  },
+  {
+    "scenario": "preset-cluttered-v1",
+    "mode": "default",
+    "outcome": "completed",
+    "expected": "completed",
+    "verdict": "passed",
+    "inspections": 1,
+    "duration": 55.605,
+    "distance_m": 10.66344221610797,
+    "phases": {
+      "approaching_target": 5464,
+      "aligning_to_target": 230,
+      "stopping_for_inspection": 1,
+      "dwelling": 200,
+      "observation_captured": 1,
+      "returning_to_dock": 4479,
+      "aligning_at_dock": 745,
+      "completed": 1
+    },
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "preset-cluttered-v1",
+    "mode": "learned_sync",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 0.20846000062923023,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2401,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2401
+    },
+    "inference": null
+  },
+  {
+    "scenario": "preset-cluttered-v1",
+    "mode": "fifo",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 0.6983399975885539,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2400,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2400
+    },
+    "inference": {
+      "scheduled": 2401,
+      "admitted": 0,
+      "completed": 2400,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 2400,
+      "deadline_misses": 2400,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 2401,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  },
+  {
+    "scenario": "preset-cluttered-v1",
+    "mode": "latest_pending",
+    "outcome": "timed_out",
+    "expected": "completed",
+    "verdict": "failed",
+    "inspections": 0,
+    "duration": 120.005,
+    "distance_m": 0.6983399975885539,
+    "phases": {
+      "approaching_target": 24001
+    },
+    "decisions": 2400,
+    "details": {
+      "candidate passed learned risk and sensor-stopping-v1": 2400
+    },
+    "inference": {
+      "scheduled": 2401,
+      "admitted": 0,
+      "completed": 2400,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 2400,
+      "deadline_misses": 2400,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 2401,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  },
+  {
+    "scenario": "fixture-unreachable-v1",
+    "mode": "default",
+    "outcome": "unreachable",
+    "expected": "unreachable",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-unreachable-v1",
+    "mode": "learned_sync",
+    "outcome": "unreachable",
+    "expected": "unreachable",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-unreachable-v1",
+    "mode": "fifo",
+    "outcome": "unreachable",
+    "expected": "unreachable",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-unreachable-v1",
+    "mode": "latest_pending",
+    "outcome": "unreachable",
+    "expected": "unreachable",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.0,
+    "distance_m": 0,
+    "phases": {},
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-collision-stop-v1",
+    "mode": "default",
+    "outcome": "collision",
+    "expected": "collision",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.213222769,
+    "distance_m": 0.09594000001883969,
+    "phases": {
+      "approaching_target": 42
+    },
+    "decisions": 0,
+    "details": {},
+    "inference": null
+  },
+  {
+    "scenario": "fixture-collision-stop-v1",
+    "mode": "learned_sync",
+    "outcome": "collision",
+    "expected": "collision",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.213187135,
+    "distance_m": 0.09594000000000014,
+    "phases": {
+      "approaching_target": 42
+    },
+    "decisions": 5,
+    "details": {
+      "no candidate passed learned risk and sensor-stopping-v1; braking": 5
+    },
+    "inference": null
+  },
+  {
+    "scenario": "fixture-collision-stop-v1",
+    "mode": "fifo",
+    "outcome": "collision",
+    "expected": "collision",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.213187135,
+    "distance_m": 0.09594000000000014,
+    "phases": {
+      "approaching_target": 42
+    },
+    "decisions": 4,
+    "details": {
+      "no candidate passed learned risk and sensor-stopping-v1; braking": 4
+    },
+    "inference": {
+      "scheduled": 5,
+      "admitted": 0,
+      "completed": 4,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 4,
+      "deadline_misses": 4,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 5,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  },
+  {
+    "scenario": "fixture-collision-stop-v1",
+    "mode": "latest_pending",
+    "outcome": "collision",
+    "expected": "collision",
+    "verdict": "passed",
+    "inspections": 0,
+    "duration": 0.213187135,
+    "distance_m": 0.09594000000000014,
+    "phases": {
+      "approaching_target": 42
+    },
+    "decisions": 4,
+    "details": {
+      "no candidate passed learned risk and sensor-stopping-v1; braking": 4
+    },
+    "inference": {
+      "scheduled": 5,
+      "admitted": 0,
+      "completed": 4,
+      "overflow": 0,
+      "expired": 0,
+      "consumed": 4,
+      "deadline_misses": 4,
+      "replaced": 0,
+      "dropped": 1,
+      "memory_rejected": 0,
+      "admitted_total": 5,
+      "dropped_total": 1,
+      "execution_mode": "virtual_fifo",
+      "timing_provenance": "modeled",
+      "resident_weights_bytes": 14852,
+      "workspace_bytes": 4096,
+      "pending_payload_bytes": 0,
+      "in_flight_payload_bytes": 0,
+      "current_modeled_memory_bytes": 18948,
+      "peak_modeled_memory_bytes": 19972,
+      "memory_budget_bytes": 32768,
+      "memory_rejections": 0
+    }
+  }
+]

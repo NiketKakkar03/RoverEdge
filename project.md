@@ -238,6 +238,13 @@ Maintain three distinct evidence streams:
 
 In native closed loop, one background worker performs inference while the simulator continues advancing. Record pacing overruns; a simulation paused by inference is not a valid latency experiment.
 
+Execute each measured native-paced mission in a fresh spawned process behind a single supervising
+evidence writer. The child owns the runtime and measured simulation interval, disables cyclic
+garbage collection during that interval, and returns its completed result before the supervisor
+serializes or compresses evidence. Enforce an exclusive evaluator lease, explicit child timeout and
+shutdown handling, and fresh process state between runs. Process startup and post-run evidence I/O
+remain outside measured mission timing.
+
 In virtual mode, numerical computation may happen on the host, but its elapsed time never advances modeled time or gets added to the modeled duration.
 
 ### Initial virtual device

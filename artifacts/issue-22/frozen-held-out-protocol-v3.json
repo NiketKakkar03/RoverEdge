@@ -1,0 +1,36 @@
+{
+  "schema": "roveredge-held-out-protocol-freeze-v3",
+  "approval_status": "approved_frozen",
+  "execution_status": "not_run",
+  "approval_record": {
+    "authority": "user_explicit_continuation",
+    "approved_on": "2026-11-02",
+    "request": "Continue with the new proposed architecture, then revise the final evaluation so that we can finish Issue 22."
+  },
+  "proposal_sha256": "b7cc2da77092c3f5d13a6b20f7c73abe8f26188042df8ad9fad05972b93f70b9",
+  "held_out_manifest_file_sha256": "773b4709b3ea4d91566bcc75c7c92982f93fe8aa15aae07ebf47994d92b34391",
+  "model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
+  "risk_cutoff": 0.0001,
+  "selection_policy_version": "learned-risk-plus-sensor-stopping-v1",
+  "safety_envelope_version": "sensor-stopping-v1",
+  "mission_scenario_generator_version": "held-out-mission-scenario-generator-v3",
+  "final_test_families": [
+    "route-final-refresh2-family-00",
+    "route-final-refresh2-family-01",
+    "route-final-refresh2-family-02"
+  ],
+  "acceptance_criteria": {
+    "maximum_false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3,
+    "numerical_tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(native naive)",
+    "maximum_command_disagreements": 0,
+    "native_pacing_overrun_limit_s": 0.02
+  },
+  "scheduled_work": {
+    "virtual_runs": 120,
+    "native_closed_loop_runs": 60,
+    "saved_input_batches_per_backend_per_repetition": 1000,
+    "saved_input_repetitions": 3
+  }
+}

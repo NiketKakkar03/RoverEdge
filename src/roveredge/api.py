@@ -2,6 +2,7 @@ import json
 import re
 from dataclasses import asdict
 from pathlib import Path
+from typing import Literal
 
 from fastapi import Body, FastAPI, HTTPException, Response
 from fastapi.staticfiles import StaticFiles
@@ -16,7 +17,25 @@ from .evidence import (
     reproduce_evidence_bundle,
 )
 from .experiment import preset_run_request, run_experiment
+from .final_evaluation import held_out_evaluation_document
 from .grounding import RecordedGroundingAdapter
+from .hosting import (
+    ArtifactStore,
+    HostedRunArtifact,
+    validate_portable_hosted_request,
+    validate_portable_hosted_run,
+)
+from .live_mission_engineer import (
+    BasetenMissionEngineer,
+    LiveInvestigationError,
+    LiveInvestigationRequest,
+    LiveInvestigationResult,
+)
+from .mission_engineer import (
+    InvestigationRequest,
+    InvestigationResult,
+    MissionEngineerBoundary,
+)
 from .models import RunRequest, RunResult, VisualTarget
 from .native import accelerate_available
 from .photo_drafting import PhotoDraftRequest, create_photo_draft, get_photo_reference
@@ -42,11 +61,20 @@ class ComparisonBundleRequest(BaseModel):
     declared_factor: str | None = None
 
 
+class SavedHostedRunRequest(BaseModel):
+    run: RunResult
+    execution_label: Literal["recorded_local", "modeled"]
+
+
+_mission_engineer = MissionEngineerBoundary()
+
+
 def _scenario_document(scenario: Scenario) -> dict[str, object]:
     target = scenario.visual_objects[0] if scenario.visual_objects else None
     return {
         "scenario_version": scenario.scenario_version,
         "name": scenario.name,
+        "requested_target_label": "Red toolbox" if "perception" in scenario.scenario_version else (target.label if target else "Storage container"),
         "map_bounds_m": {"width": scenario.width_m, "height": scenario.height_m},
         "dock_pose": asdict(scenario.dock_pose),
         "pixels_per_meter": scenario.pixels_per_meter,
@@ -205,6 +233,86 @@ def create_run(request: RunRequest) -> RunResult:
         return run_experiment(request)
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/investigations/recorded")
+def create_recorded_investigation(request: InvestigationRequest) -> InvestigationResult:
+    try:
+        return _mission_engineer.execute(request)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/investigations/live")
+def create_live_investigation(request: LiveInvestigationRequest) -> LiveInvestigationResult:
+    try:
+        return BasetenMissionEngineer().execute(request)
+    except LiveInvestigationError as error:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": str(error),
+                "provider_calls_used": error.provider_calls_used,
+                "model": error.model,
+            },
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/api/hosting/status")
+def hosting_status() -> dict[str, object]:
+    return {
+        "deployment_gate": "not_run",
+        "artifact_store": "ROVEREDGE_ARTIFACT_DIR",
+        "credentials": "server_process_only",
+        "accepted_secret_names": ["MODEL_API_KEY", "Baseten_API_KEY"],
+        "apple_accelerate_live": "unavailable_in_portable_hosting",
+        "execution_labels": ["live_hosted", "recorded_local", "modeled"],
+    }
+
+
+@app.get("/api/evaluations/held-out")
+def held_out_evaluation_status() -> dict[str, object]:
+    """Expose hash-checked readiness and any retained final execution or stop evidence."""
+    return held_out_evaluation_document()
+
+
+@app.post("/api/hosted/runs")
+def create_hosted_run(request: RunRequest) -> HostedRunArtifact:
+    try:
+        validate_portable_hosted_request(request)
+        result = create_run(request)
+        validate_portable_hosted_run(result)
+        label: Literal["live_hosted", "modeled"] = (
+            "modeled"
+            if result.request.configuration.execution_mode == "virtual_fifo"
+            else "live_hosted"
+        )
+        return ArtifactStore.from_environment().save(result, label)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.post("/api/hosted/saved-runs")
+def save_hosted_fallback(request: SavedHostedRunRequest) -> HostedRunArtifact:
+    try:
+        return ArtifactStore.from_environment().save(request.run, request.execution_label)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/api/hosted/runs")
+def list_hosted_runs() -> dict[str, object]:
+    return {"run_ids": list(ArtifactStore.from_environment().list_run_ids())}
+
+
+@app.get("/api/hosted/runs/{run_id}")
+def get_hosted_run(run_id: str) -> HostedRunArtifact:
+    try:
+        return ArtifactStore.from_environment().load(run_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @app.post("/api/evidence-bundles/run")

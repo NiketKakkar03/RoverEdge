@@ -1,4 +1,6 @@
 import { ReplayController, type ReplayEvent } from "./replay";
+import { explainRun, summarizeRun } from "./run-summary";
+import { attachPresentationCamera, drawPresentationScene, resetPresentationCamera } from "./presentation-scene";
 
 export interface Pose {
   x_m: number;
@@ -7,6 +9,7 @@ export interface Pose {
 }
 
 export interface Scenario {
+  requested_target_label?: string;
   scenario_version: string;
   name: string;
   map_bounds_m: { width: number; height: number };
@@ -98,6 +101,7 @@ export interface RunRequest {
     model_sha256?: string | null;
     risk_cutoff?: number | null;
     candidate_set_id?: string | null;
+    safety_envelope_version?: "sensor-stopping-v1" | "sensor-stopping-v2";
     execution_mode?: "synchronous" | "virtual_fifo" | "native_paced";
     pacing_overrun_limit_s?: number;
     modeled_device?: {
@@ -269,6 +273,7 @@ export interface RoverEdgeApi {
   saveSceneVersion?(draft: SceneDraft): Promise<Scenario>;
   createPhotoDraft?(name: string, dataUrl: string): Promise<PhotoDraftResult>;
   getAccelerateComparison?(): Promise<AccelerateComparison>;
+  getHeldOutReadiness?(): Promise<HeldOutReadiness>;
   run(request: RunRequest): Promise<RunResult>;
   exportRun?(result: RunResult): Promise<Blob>;
   exportComparison?(
@@ -276,6 +281,13 @@ export interface RoverEdgeApi {
     after: RunResult,
     declaredFactor?: string,
   ): Promise<Blob>;
+}
+
+interface HeldOutReadiness {
+  status: "awaiting_quality_review" | "ready_to_execute";
+  protocol_approval_status: "pending_quality_threshold_review";
+  required_gates: Record<string, "met" | "not_met" | "not_run">;
+  final_test_families: string[];
 }
 
 interface AccelerateComparison {
@@ -297,6 +309,9 @@ export const httpApi: RoverEdgeApi = {
   },
   async getAccelerateComparison() {
     return requestJson<AccelerateComparison>("/api/native-comparisons/accelerate");
+  },
+  async getHeldOutReadiness() {
+    return requestJson<HeldOutReadiness>("/api/evaluations/held-out");
   },
   async getSceneDraft(scenarioVersion) {
     return requestJson<SceneDraft>(`/api/scenarios/${scenarioVersion}/draft`);
@@ -324,6 +339,13 @@ export const httpApi: RoverEdgeApi = {
 
 export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): Promise<void> {
   root.innerHTML = applicationMarkup();
+  root.querySelector<HTMLButtonElement>("[data-action='start']")!.disabled = true;
+  root.querySelector<HTMLSelectElement>("[data-action='scenario']")!.disabled = true;
+  const presentationCanvas = root.querySelector<HTMLCanvasElement>("[data-field='presentation-canvas']")!;
+  attachPresentationCamera(presentationCanvas);
+  root.querySelector<HTMLButtonElement>("[data-action='reset-camera']")!.addEventListener("click", () => {
+    resetPresentationCamera(presentationCanvas);
+  });
   const scenarios = await api.getScenarios();
   let scenario = scenarios[0]!;
   const selector = root.querySelector<HTMLSelectElement>("[data-action='scenario']")!;
@@ -335,11 +357,17 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   }
   const showScenario = (): void => {
     setText(root, "scenario", `${scenario.name} · ${scenario.scenario_version}`);
-    setText(root, "target", scenario.target.label);
+    setText(root, "target", scenario.requested_target_label ?? scenario.target.label);
+    setText(root, "brief-target", scenario.requested_target_label ?? scenario.target.label);
+    setText(root, "stage-caption", `${scenario.name}. Target: ${scenario.target.label}. ${scenario.obstacles.length} recorded obstacles. Presentation view; open the technical map for exact geometry.`);
     memoryBudget.value = String(
       scenario.default_run_request.configuration.modeled_device?.memory_budget_bytes ?? 32768,
     );
     populateExperimentForm(root, scenario.default_run_request);
+    drawPresentationScene(
+      presentationCanvas,
+      scenario,
+    );
   };
   showScenario();
   if (!api.getSceneDraft || !api.saveSceneVersion) {
@@ -375,8 +403,47 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
       `${comparison.available_locally ? "available locally" : "unavailable locally"} · recorded ${recorded.hardware_model} · correctness ${recorded.correctness_gate} · naive ${recorded.latency["native-naive"].median_us} µs median · Accelerate ${recorded.latency["native-accelerate"].median_us} µs median · ${recorded.timing_provenance}`,
     );
   }
+  if (api.getHeldOutReadiness) {
+    const readiness = await api.getHeldOutReadiness();
+    const gates = Object.entries(readiness.required_gates)
+      .map(([name, status]) => `${humanize(name)}: ${status}`)
+      .join(" · ");
+    setText(
+      root,
+      "held-out-readiness",
+      `${readiness.status} · protocol ${readiness.protocol_approval_status} · ${readiness.final_test_families.length} untouched families · ${gates}`,
+    );
+  }
 
   let result: RunResult | undefined;
+  let lastCompletedRun: RunResult | undefined;
+  root.querySelector("[data-action='investigate']")!.addEventListener("click", async () => {
+    if (!result) return;
+    const button = root.querySelector<HTMLButtonElement>("[data-action='investigate']")!;
+    const consent = root.querySelector<HTMLInputElement>("[data-action='provider-consent']")!;
+    if (!consent.checked) {
+      setText(root, "investigation-result", "Confirm the two provider requests before starting the investigation.");
+      return;
+    }
+    button.disabled = true;
+    setText(root, "investigation-result", "Investigating the recorded mission…");
+    try {
+      const response = await requestJson<{ provider_summary: string; model: string; provider_calls_used: number; investigation: { explanation: { what_happened: string; tested_change: string; whether_it_helped: string }; follow_up_runs_used: number } }>("/api/investigations/live", {
+        baseline: result,
+        instruction: root.querySelector<HTMLTextAreaElement>("[data-action='investigation-question']")!.value,
+        confirm_live_provider_call: true,
+      });
+      const explanation = response.investigation.explanation;
+      setText(root, "investigation-result", `${explanation.what_happened}\nTested change: ${explanation.tested_change}\nResult: ${explanation.whether_it_helped}\n${response.provider_summary}`);
+      setText(root, "investigation-source", `Live Meta model via Baseten: ${response.model}. ${response.provider_calls_used} provider requests; ${response.investigation.follow_up_runs_used} follow-up simulations.`);
+    } catch (error) {
+      setText(root, "investigation-result", `Investigation could not finish: ${error instanceof Error ? error.message : String(error)}. Your mission result is still available.`);
+      const requestError = error as Error & { providerCallsUsed?: number; model?: string };
+      if (requestError.providerCallsUsed !== undefined) {
+        setText(root, "investigation-source", `Live Meta model via Baseten: ${requestError.model ?? "configured model"}. ${requestError.providerCallsUsed} provider request${requestError.providerCallsUsed === 1 ? "" : "s"} used before evidence validation stopped the investigation.`);
+      }
+    } finally { button.disabled = false; }
+  });
   let replay: ReplayController | undefined;
   let comparisonBaseline: RunResult | undefined;
   let comparisonReplay: ReplayController | undefined;
@@ -388,10 +455,18 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     if (!result || !replay) return;
     const event = replay.currentEvent() as TraceEvent;
     setText(root, "phase", humanize(event.phase));
+    setText(root, "brief-phase", humanize(event.phase));
+    setText(root, "stage-caption", `${scenario.name}. Rover at map x ${event.pose.x_m.toFixed(2)} m, y ${event.pose.y_m.toFixed(2)} m; phase ${humanize(event.phase)}. Presentation view follows recorded pose.`);
     setText(root, "time", `${event.simulated_time_s.toFixed(2)} s`);
     const slider = root.querySelector<HTMLInputElement>("[data-action='scrub']")!;
     slider.value = String(event.simulated_time_s);
-    drawScene(root.querySelector("canvas")!, scenario, result, event);
+    drawScene(root.querySelector<HTMLCanvasElement>(".technical-map canvas")!, scenario, result, event);
+    drawPresentationScene(
+      presentationCanvas,
+      scenario,
+      result,
+      event,
+    );
     if (comparisonBaseline && comparisonReplay && comparisonScenario) {
       comparisonReplay.scrubTo(event.simulated_time_s);
       const comparisonEvent = comparisonReplay.currentEvent() as TraceEvent;
@@ -450,6 +525,9 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
         ? `${agedDecision.observation_age_s.toFixed(3)} s · ${agedDecision.timing_provenance ?? "unknown"}`
         : "Not available",
     );
+    setText(root, "prediction-age-primary", agedDecision?.observation_age_s != null
+      ? `${agedDecision.observation_age_s.toFixed(3)} s (${agedDecision.timing_provenance ?? "unknown"})`
+      : "Not available");
     const queueEvent = result.trace
       .slice(0, event.sequence + 1)
       .reverse()
@@ -487,7 +565,7 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
       setText(root, "status", "Configuration rejected; last successful run preserved.");
       return;
     }
-    comparisonBaseline = result;
+    comparisonBaseline = lastCompletedRun;
     comparisonReplay = comparisonBaseline
       ? new ReplayController(comparisonBaseline.trace)
       : undefined;
@@ -497,6 +575,11 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
         )
       : undefined;
     result = nextResult;
+    lastCompletedRun = nextResult;
+    root.querySelector<HTMLButtonElement>("[data-action='investigate']")!.disabled = false;
+    setText(root, "run-explanation", explainRun(result));
+    setText(root, "investigation-result", "Ask the engineer to inspect this run and test a bounded change.");
+    setText(root, "investigation-source", "No provider requests made for this investigation yet.");
     replay = new ReplayController(result.trace);
     replayStartedAt = 0;
     replayStartTime = 0;
@@ -518,6 +601,13 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     setText(root, "configuration", formatConfiguration(result.request));
     setText(root, "outcome", result.mission_outcome);
     setText(root, "verdict", result.test_verdict);
+    setText(root, "mission-outcome-primary", humanize(result.mission_outcome));
+    setText(root, "test-verdict-primary", humanize(result.test_verdict));
+    setText(root, "run-source", result.inference_summary?.timing_provenance === "modeled"
+      ? "Modeled device run"
+      : result.inference_summary?.timing_provenance === "measured"
+        ? "Measured local run"
+        : "Deterministic simulation run");
     setText(
       root,
       "target-visits",
@@ -598,6 +688,62 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
   root
     .querySelector("[data-action='start']")!
     .addEventListener("click", () => void run(() => api.run(scenario.default_run_request)));
+  root.querySelector<HTMLButtonElement>("[data-action='queue-comparison']")!
+    .addEventListener("click", async () => {
+      const button = root.querySelector<HTMLButtonElement>("[data-action='queue-comparison']")!;
+      button.disabled = true;
+      const base = scenario.default_run_request;
+      const device = base.configuration.modeled_device!;
+      const compute = Number(root.querySelector<HTMLSelectElement>("[data-action='comparison-delay']")!.value);
+      const fifo: RunRequest = {
+        ...base,
+        configuration: {
+          ...base.configuration,
+          controller_kind: "learned_collision_risk",
+          model_artifact_version: "risk-model-v2",
+          safety_envelope_version: "sensor-stopping-v2",
+          execution_mode: "virtual_fifo",
+          modeled_device: { ...device, compute_s: compute, pending_capacity: 4, queue_policy: "fifo" },
+        },
+      };
+      const latest: RunRequest = {
+        ...fifo,
+        configuration: {
+          ...fifo.configuration,
+          modeled_device: { ...device, compute_s: compute, pending_capacity: 4, queue_policy: "latest_pending" },
+        },
+      };
+      const mode = root.querySelector<HTMLSelectElement>("[data-action='comparison-mode']")!;
+      mode.value = "controlled";
+      root.querySelector<HTMLInputElement>("[data-action='declared-factor']")!.value =
+        "configuration.modeled_device.queue_policy";
+      const previousResult = result;
+      await run(() => api.run(fifo));
+      if (result !== previousResult && result?.request.configuration.modeled_device?.queue_policy === "fifo") {
+        const fifoResult = result;
+        await run(() => api.run(latest));
+        if (result !== fifoResult && comparisonBaseline === fifoResult && result) {
+          const before = comparisonBaseline;
+          const after = result;
+          const validity = formatComparisonValidity(before.request, after.request, "configuration.modeled_device.queue_policy");
+          const conclusion = before.mission_outcome === after.mission_outcome
+            ? "No mission outcome change observed."
+            : `Mission outcome changed from ${humanize(before.mission_outcome)} to ${humanize(after.mission_outcome)}.`;
+          setText(root, "story-result", `FIFO: ${humanize(before.mission_outcome)}. Latest pending: ${humanize(after.mission_outcome)}. ${conclusion} ${validity}. FIFO: ${explainRun(before)} Latest pending: ${explainRun(after)}`);
+          const observedAge = (run: RunResult): string => {
+            const summary = summarizeRun(run);
+            return summary.meanAge == null ? "No accepted age samples" : `${(summary.meanAge * 1000).toFixed(0)} ms average / ${(summary.maxAge! * 1000).toFixed(0)} ms max (${summary.decisions} accepted decisions)`;
+          };
+          setText(root, "fifo-outcome", humanize(before.mission_outcome));
+          setText(root, "latest-outcome", humanize(after.mission_outcome));
+          setText(root, "fifo-age", observedAge(before));
+          setText(root, "latest-age", observedAge(after));
+          setText(root, "fifo-replacements", String(before.inference_summary?.replaced ?? "Not available"));
+          setText(root, "latest-replacements", String(after.inference_summary?.replaced ?? "Not available"));
+        }
+      }
+      button.disabled = false;
+    });
   exportRunButton.addEventListener("click", async () => {
     if (!result || !api.exportRun) return;
     downloadBlob(
@@ -755,6 +901,20 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
       void run(() => api.run(configuredRequest(root, scenario.default_run_request))),
     );
   selector.addEventListener("change", () => {
+    replay?.pause();
+    result = undefined;
+    replay = undefined;
+    comparisonBaseline = undefined;
+    comparisonReplay = undefined;
+    root.querySelector<HTMLButtonElement>("[data-action='investigate']")!.disabled = true;
+    root.querySelector<HTMLInputElement>("[data-action='scrub']")!.disabled = true;
+    exportRunButton.disabled = true;
+    exportComparisonButton.disabled = true;
+    for (const field of ["mission-outcome-primary", "test-verdict-primary", "prediction-age-primary", "fifo-outcome", "latest-outcome", "fifo-age", "latest-age", "fifo-replacements", "latest-replacements"]) setText(root, field, "No run for this scenario");
+    setText(root, "run-explanation", "Run this scenario to see its result.");
+    setText(root, "brief-phase", "Not started");
+    setText(root, "run-source", "No run selected");
+    setText(root, "story-result", "Run both policies to compare this scenario.");
     scenario = scenarios.find((item) => item.scenario_version === selector.value)!;
     showScenario();
   });
@@ -1068,6 +1228,8 @@ export async function mountApp(root: HTMLElement, api: RoverEdgeApi = httpApi): 
     replay?.scrubTo(Number((event.target as HTMLInputElement).value));
     render();
   });
+  root.querySelector<HTMLButtonElement>("[data-action='start']")!.disabled = false;
+  selector.disabled = false;
 }
 
 async function requestJson<T>(path: string, body?: unknown): Promise<T> {
@@ -1078,12 +1240,26 @@ async function requestJson<T>(path: string, body?: unknown): Promise<T> {
   });
   if (!response.ok) {
     const error = (await response.json()) as {
-      detail?: string | Array<{ msg?: string }>;
+      detail?: string | Array<{ msg?: string }> | {
+        message?: string;
+        provider_calls_used?: number;
+        model?: string;
+      };
     };
     const detail = Array.isArray(error.detail)
       ? error.detail.map((item) => item.msg).filter(Boolean).join("; ")
-      : error.detail;
-    throw new Error(detail || `Request failed with status ${response.status}`);
+      : typeof error.detail === "object" && error.detail
+        ? error.detail.message
+        : error.detail;
+    const requestError = new Error(detail || `Request failed with status ${response.status}`) as Error & {
+      providerCallsUsed?: number;
+      model?: string;
+    };
+    if (typeof error.detail === "object" && error.detail && !Array.isArray(error.detail)) {
+      requestError.providerCallsUsed = error.detail.provider_calls_used;
+      requestError.model = error.detail.model;
+    }
+    throw requestError;
   }
   return (await response.json()) as T;
 }
@@ -1534,12 +1710,14 @@ function showGroundingEvidence(root: HTMLElement, result: RunResult): void {
 
 function applicationMarkup(): string {
   return `
+    <header class="workshop-header"><a href="#app" class="wordmark">RoverEdge</a><nav aria-label="Workshop sections"><a href="#mission">Mission</a><a href="#experiment">Experiment</a><a href="#evidence">Evidence</a></nav><span>Robotics experiment workshop</span></header>
     <section class="hero">
-      <p class="eyebrow">Deterministic reference mission</p>
-      <h1>Inspect and return</h1>
+      <h1>Inspect the target. Test the delay.</h1>
+      <p class="intro">See how old inference changes a simulated inspection mission.</p>
       <p data-field="scenario">Loading preset…</p>
       <p>Target: <strong data-field="target">—</strong></p>
       <label>Scenario <select data-action="scenario" aria-label="Scenario"></select></label>
+      <details class="setup-disclosure" id="experiment"><summary>Set up an experiment</summary>
       <section data-field="scene-editor" class="scene-editor">
         <h2>Scene editor</h2>
         <div class="controls">
@@ -1571,8 +1749,7 @@ function applicationMarkup(): string {
           <figcaption data-field="scene-preview-scale">100 px/m declared scale</figcaption>
         </figure>
       </section>
-      <div class="actions">
-        <button data-action="start">Start run</button>
+      <div class="actions advanced-actions">
         <button data-action="learned">Run learned controller</button>
         <button data-action="native">Run native naive</button>
         <button data-action="native-paced">Run native paced</button>
@@ -1656,14 +1833,27 @@ function applicationMarkup(): string {
           </select></label>
           <label>Declared factor path<input data-action="declared-factor" value="configuration.rover_radius_m"></label>
         </div>
+      </details>
     </section>
-    <section class="mission-grid">
+    <section class="mission-grid" id="mission">
       <div class="stage">
-        <canvas width="800" height="600" aria-label="Recorded mission replay"></canvas>
-        <canvas data-field="comparison-canvas" width="800" height="600" aria-label="Before mission replay"></canvas>
+        <canvas data-field="presentation-canvas" width="1200" height="660" aria-label="Interactive 3D presentation of the recorded warehouse mission. Drag to orbit; use arrow keys to orbit and plus or minus to zoom."></canvas>
+        <div class="stage-tools"><span>Recorded 3D replay · drag to orbit · wheel or +/− to zoom</span><button class="secondary" data-action="reset-camera">Reset camera</button></div>
+        <div class="stage-caption" data-field="stage-caption">Presentation view follows recorded scenario geometry and rover poses.</div>
+        <details class="technical-map"><summary>Inspect synchronized top-down map</summary><canvas width="800" height="600" aria-label="Recorded mission replay"></canvas><canvas data-field="comparison-canvas" width="800" height="600" aria-label="Before mission replay"></canvas></details>
       </div>
-      <aside class="evidence">
-        <p class="eyebrow">Recorded evidence</p>
+      <aside class="mission-brief"><h2>Mission brief</h2><dl><dt>Task</dt><dd>Inspect the selected target and return to dock</dd><dt>Target</dt><dd data-field="brief-target">—</dd><dt>Phase</dt><dd data-field="brief-phase">Not started</dd><dt>Source</dt><dd data-field="run-source">No run selected</dd></dl><button data-action="start">Run mission</button></aside>
+    </section>
+    <section class="replay-controls">
+      <button data-action="play">Play</button>
+      <button data-action="pause">Pause</button>
+      <button data-action="restart">Restart</button>
+      <input data-action="scrub" aria-label="Replay time" type="range" min="0" max="0" step="0.05" value="0" disabled>
+    </section>
+    <section class="primary-evidence" aria-label="Current mission evidence"><div><span>Mission outcome</span><strong data-field="mission-outcome-primary">—</strong></div><div><span>Test verdict</span><strong data-field="test-verdict-primary">—</strong></div><div><span>Observation age at replay time</span><strong data-field="prediction-age-primary">Not available</strong></div></section>
+    <section class="experiment-story" aria-label="Run explanation"><h2>What happened in this mission?</h2><p data-field="run-explanation">Run a mission to see whether the rover inspected its target and returned to dock.</p><h2>Investigate with the mission engineer</h2><p>The Meta model reads this run, tests a bounded configuration change, and explains the recorded result.</p><label>Investigation question <textarea data-action="investigation-question" rows="3">Why did this mission finish or stop? Inspect the trace, test one supported change, and explain whether it helped.</textarea></label><p><label><input type="checkbox" data-action="provider-consent"> Send this run and question to Baseten for two Meta model requests and up to three local follow-up simulations.</label></p><button data-action="investigate" disabled>Investigate this run</button><p data-field="investigation-result" role="status">Run a mission first.</p><p data-field="investigation-source">No provider requests made for this investigation yet.</p></section>
+    <section class="experiment-story"><h2>Does processing older observations affect this mission?</h2><p>FIFO processes observations in arrival order. Latest pending replaces waiting observations with newer ones. Compare their progress under the same simulated delay. Expired results cannot drive the rover. Compute time is only one part of total inference latency, and outcomes remain scenario-dependent.</p><p><strong>Recommended latency demonstration:</strong> use Open inspection lane or Perception feasibility room. In the other scenarios, perception or physical constraints can determine the outcome before queue policy does.</p><div class="story-facts"><span>Changed factor: queue policy</span><label>Simulated compute time <select data-action="comparison-delay"><option value="0.02">20 ms compute</option><option value="0.08" selected>80 ms compute (congested)</option></select></label><span>Pending capacity: 4</span></div><button data-action="queue-comparison">Run queue comparison</button><p data-field="story-result" role="status">Run both policies to compare their actual outcomes.</p><table class="comparison-table"><caption>Paired modeled runs on the selected mission</caption><thead><tr><th scope="col">Policy</th><th scope="col">Mission outcome</th><th scope="col">Accepted decision age (whole run)</th><th scope="col">Pending replacements</th></tr></thead><tbody><tr><th scope="row">FIFO</th><td data-field="fifo-outcome">—</td><td data-field="fifo-age">—</td><td data-field="fifo-replacements">—</td></tr><tr><th scope="row">Latest pending</th><td data-field="latest-outcome">—</td><td data-field="latest-age">—</td><td data-field="latest-replacements">—</td></tr></tbody></table><a href="#experiment">Configure another experiment</a></section>
+    <details class="evidence" id="evidence"><summary>Technical details and reproducibility</summary>
         <dl>
           <dt>Run</dt><dd data-field="run-id">—</dd>
           <dt>Scenario version</dt><dd data-field="scenario-version">—</dd>
@@ -1674,6 +1864,7 @@ function applicationMarkup(): string {
           <dt>Controller</dt><dd data-field="controller">—</dd>
           <dt>Risk model</dt><dd data-field="model">Not used</dd>
           <dt>Validation evidence</dt><dd data-field="validation">Not applicable</dd>
+          <dt>Held-out readiness</dt><dd data-field="held-out-readiness">Not loaded</dd>
           <dt>Inference runtime</dt><dd data-field="runtime">Not applicable</dd>
           <dt>Modeled memory</dt><dd data-field="modeled-memory">Not applicable</dd>
           <dt>Native paced timing</dt><dd data-field="native-paced">Not applicable</dd>
@@ -1696,14 +1887,7 @@ function applicationMarkup(): string {
           <dt>Terminal failure</dt><dd data-field="failure">None</dd>
         </dl>
         <p data-field="status">Ready to run.</p>
-      </aside>
-    </section>
-    <section class="replay-controls">
-      <button data-action="play">Play</button>
-      <button data-action="pause">Pause</button>
-      <button data-action="restart">Restart</button>
-      <input data-action="scrub" aria-label="Replay time" type="range" min="0" max="0" step="0.05" value="0" disabled>
-    </section>
+    </details>
     <section class="timeline"><h2>Mission phases</h2><p data-field="phases">No recorded run yet.</p></section>
   `;
 }

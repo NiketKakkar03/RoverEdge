@@ -1,0 +1,153 @@
+{
+  "schema": "roveredge-held-out-protocol-v1",
+  "approval_status": "pending_quality_threshold_review",
+  "execution_status": "not_run",
+  "evidence_policy": {
+    "include_every_scheduled_result": true,
+    "preserve_failures": true,
+    "provider_fixture_satisfies_live_gate": false,
+    "recorded_local_satisfies_deployment_gate": false,
+    "timing_provenance_required": true,
+    "export_formats": [
+      "browser_json",
+      "json_report",
+      "csv_run_index",
+      "trace_json"
+    ],
+    "uncertainty_reporting": {
+      "method": "95% nonparametric bootstrap confidence interval",
+      "resamples": 10000,
+      "seed": 20261102,
+      "report_when_sample_count_at_least": 2
+    }
+  },
+  "frozen_candidate_inputs": {
+    "dataset_manifest_file_sha256": "c3144ae012081848fd22aeb8ac612ab6d178eeb8b94dc862255c40f53a18bfee",
+    "final_test_families": [
+      "route-final-family-00",
+      "route-final-family-01",
+      "route-final-family-02"
+    ],
+    "final_test_split_sha256": "310bb166c8f4dddec97ecbee52504ba416b6d5ef79458a003ca78cf949623f5c",
+    "model_artifact_file_sha256": "2812484a022f541bbb3ede63c1a63e58bf986f73c500f606c5dbf351ba88f005",
+    "model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
+    "risk_cutoff": 0.0001,
+    "selection_policy_version": "learned-risk-plus-sensor-stopping-v1",
+    "safety_envelope_version": "sensor-stopping-v1"
+  },
+  "proposed_acceptance_criteria": {
+    "maximum_false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3,
+    "numerical_tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(native naive)",
+    "maximum_command_disagreements": 0,
+    "native_pacing_overrun_limit_s": 0.02
+  },
+  "proposed_sample_counts": {
+    "virtual_scenarios_per_condition": 20,
+    "saved_input_batches_per_backend_per_repetition": 1000,
+    "saved_input_repetitions": 3,
+    "native_closed_loop_runs_per_backend_per_final_family": 5,
+    "native_closed_loop_total_runs": 60
+  },
+  "paired_scenario_manifest": {
+    "schema": "roveredge-held-out-paired-scenarios-v1",
+    "generation_rule": "Generate only after freeze from the named final family using held-out-mission-scenario-generator-v1; do not run or inspect a generated scenario before its scheduled run.",
+    "mission_scenario_generator_version": "held-out-mission-scenario-generator-v1",
+    "family_order": [
+      "route-final-family-00",
+      "route-final-family-01",
+      "route-final-family-02"
+    ],
+    "virtual_allocation_rule": "For each condition, schedule scenario indices 0 through 19. Assign index i to family_order[i mod 3], yielding 7, 7, and 6 runs respectively. The same index is paired across the FIFO and latest-pending variant of a load profile.",
+    "indexed_variation_rule": "For a family and scenario index i, seed randomization from the first 8 bytes of SHA-256(family_id + ':' + decimal(i)), big-endian. Offset target center y by uniform[-0.3, 0.3] m; for narrow scenes also offset both corridor blocks by uniform[-0.1, 0.1] m. Open and cluttered obstacle layouts remain fixed. This rule is part of held-out-mission-scenario-generator-v1.",
+    "mission_templates": {
+      "route-final-family-00": "open",
+      "route-final-family-01": "narrow",
+      "route-final-family-02": "cluttered"
+    },
+    "virtual_conditions": [
+      {
+        "condition_id": "uncongested-fifo",
+        "queue_policy": "fifo",
+        "device_profile": "uncongested"
+      },
+      {
+        "condition_id": "uncongested-latest-pending",
+        "queue_policy": "latest_pending_observation",
+        "device_profile": "uncongested"
+      },
+      {
+        "condition_id": "steady-congestion-fifo",
+        "queue_policy": "fifo",
+        "device_profile": "steady_congestion"
+      },
+      {
+        "condition_id": "steady-congestion-latest-pending",
+        "queue_policy": "latest_pending_observation",
+        "device_profile": "steady_congestion"
+      },
+      {
+        "condition_id": "burst-congestion-fifo",
+        "queue_policy": "fifo",
+        "device_profile": "brief_congestion_burst"
+      },
+      {
+        "condition_id": "burst-congestion-latest-pending",
+        "queue_policy": "latest_pending_observation",
+        "device_profile": "brief_congestion_burst"
+      }
+    ],
+    "virtual_total_runs": 120,
+    "native_paced": {
+      "condition_id": "native-paced-uncongested",
+      "backends": [
+        "native-naive",
+        "native-blocked",
+        "native-parallel-blocked",
+        "native-accelerate"
+      ],
+      "workers": {
+        "native-naive": 1,
+        "native-blocked": 1,
+        "native-parallel-blocked": 4,
+        "native-accelerate": 1
+      },
+      "pairing_rule": "For each final family and repetition index, run every backend against the same generated state and mission request in listed backend order. No result selects or removes a later scheduled run."
+    }
+  },
+  "pacing_validity_rule": {
+    "scope": "Every native-paced planning tick in every scheduled native closed-loop run.",
+    "valid_when": "Each recorded pacing_overrun_s is less than or equal to 0.02 seconds; a run with a larger overrun is invalid evidence, not a successful result.",
+    "timing_provenance": "measured_local_wall_clock",
+    "report": [
+      "planning_ticks",
+      "pacing_overrun_count",
+      "maximum_pacing_overrun_s",
+      "per-run measured inference durations"
+    ]
+  },
+  "prerequisite_gates": {
+    "quality_threshold_review": "must_be_explicitly_approved_and_frozen",
+    "validation_quality": "met",
+    "numerical_all_four_m1_backends": "met",
+    "live_provider_and_agent": "met",
+    "portable_deployment_and_persistence": "met"
+  },
+  "post_freeze_execution_order": [
+    "Verify all prerequisite gates, candidate hashes, scenario-family identities, and clean output destination before generating any final family.",
+    "Generate and run each scheduled virtual condition in manifest order; retain every trace and failure.",
+    "Run native-paced pairs in final-family, repetition, then backend order; retain every trace and failure.",
+    "Run the 1000-batch by three-repetition saved-input replay without using it as closed-loop timing evidence.",
+    "Write the browser JSON, report, run index, trace files, timing provenance, and bootstrap intervals only after all scheduled work has completed or an allowed stop is recorded."
+  ],
+  "stopping_rules": [
+    "Run the exact reviewed sample counts; do not stop early for favorable or unfavorable results.",
+    "Stop only for invalid evidence, configuration drift, infrastructure failure, or a failed prerequisite gate.",
+    "Retain every completed result before a stop and report the stop reason.",
+    "Any tuning after held-out execution requires a new model version and a new untouched final set."
+  ],
+  "review_blockers": [
+    "The separately accepted live-provider and portable-hosting records do not replace the required quality-threshold review."
+  ]
+}

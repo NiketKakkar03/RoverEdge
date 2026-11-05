@@ -1,0 +1,20 @@
+{
+  "schema": "roveredge-held-out-family-manifest-v2",
+  "status": "untouched",
+  "generator_version": "held-out-mission-scenario-generator-v2",
+  "decision_dataset_generator_version": "synthetic-risk-generator-v1",
+  "families": [
+    "route-final-refresh1-family-00",
+    "route-final-refresh1-family-01",
+    "route-final-refresh1-family-02"
+  ],
+  "family_split_sha256": "5e5d8ece3f0ebee57e42b840112d319ac3131db5a1787576b2d01e2a779fddd8",
+  "samples_per_family": 256,
+  "candidates_per_state": 8,
+  "supersedes_consumed_families": [
+    "route-final-family-00",
+    "route-final-family-01",
+    "route-final-family-02"
+  ],
+  "independence_rule": "Generate only after the v2 protocol is frozen and all non-final pacing preflights pass."
+}

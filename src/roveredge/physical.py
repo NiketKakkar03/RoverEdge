@@ -1,7 +1,6 @@
 import hashlib
 import json
 import math
-import time
 import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -19,7 +18,7 @@ from .learning import (
     candidate_progress_score,
     load_risk_model,
     predict_risk,
-    select_candidate,
+    select_safe_candidate,
 )
 from .models import (
     EventKind,
@@ -38,9 +37,10 @@ from .models import (
     TestVerdict,
     TraceEvent,
 )
-from .native import NativeRiskModel, runtime_provenance
+from .native import NativePlanningPacer, NativeRiskModel, runtime_provenance
 from .native_paced import NativePacedEvent, NativePacedExecutor
 from .planning import plan_route
+from .safety import SafetyEnvelopeConfiguration
 from .scenarios import Scenario, VisualObject, get_scenario, physical_run_request
 
 
@@ -63,16 +63,26 @@ def run_physical_experiment(
     )
     configuration = request.configuration
     risk_model = (
-        _load_default_risk_model()
+        _load_risk_model_for_request(request)
         if configuration.controller_kind == "learned_collision_risk"
         else None
     )
     if risk_model is not None:
         request = _freeze_learned_configuration(request, risk_model)
         configuration = request.configuration
-    episode_id = "episode-" + hashlib.sha256(
-        json.dumps(asdict(request), sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()[:16]
+    safety_envelope = SafetyEnvelopeConfiguration(
+        version=configuration.safety_envelope_version,
+        rover_radius_m=configuration.rover_radius_m,
+        sparse_sensor_margin_m=configuration.rover_radius_m,
+        max_linear_acceleration_mps2=configuration.max_linear_acceleration_mps2,
+        max_braking_deceleration_mps2=configuration.max_braking_deceleration_mps2,
+    )
+    episode_id = (
+        "episode-"
+        + hashlib.sha256(
+            json.dumps(asdict(request), sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()[:16]
+    )
     native_model = (
         NativeRiskModel(
             risk_model,
@@ -90,13 +100,15 @@ def run_physical_experiment(
                 tuple[tuple[float, ...], ...],
                 tuple[float, ...],
                 tuple[float, ...],
+                LearningState,
             ]
         ](lambda payload: native_model.evaluate(payload[0]).scores)
         if native_model is not None and configuration.execution_mode == "native_paced"
         else None
     )
+    native_pacer = NativePlanningPacer() if native_paced is not None else None
     virtual_device = (
-        FifoDevice[tuple[tuple[float, ...], tuple[float, ...]]](
+        FifoDevice[tuple[tuple[float, ...], tuple[float, ...], LearningState]](
             configuration.modeled_device
         )
         if risk_model is not None and configuration.execution_mode == "virtual_fifo"
@@ -267,9 +279,7 @@ def run_physical_experiment(
                 event_candidate_set_id=event.candidate_set_id,
                 event_model_sha256=event.model_sha256,
                 queue_wait_s=(
-                    round(event.queue_wait_s, 9)
-                    if event.queue_wait_s is not None
-                    else None
+                    round(event.queue_wait_s, 9) if event.queue_wait_s is not None else None
                 ),
                 modeled_memory_bytes=event.modeled_memory_bytes,
                 memory_budget_bytes=event.memory_budget_bytes,
@@ -309,20 +319,15 @@ def run_physical_experiment(
     outcome: MissionOutcome
     terminal_reason: str
     terminal_failure: TerminalFailure | None = None
-    wall_started_s = time.perf_counter()
     pacing_overruns = 0
     maximum_pacing_overrun_s = 0.0
 
     while True:
-        if native_paced is not None:
-            target_wall_s = wall_started_s + simulated_time
-            remaining_s = target_wall_s - time.perf_counter()
-            if remaining_s > 0:
-                time.sleep(remaining_s)
-            pacing_overrun_s = max(0.0, time.perf_counter() - target_wall_s)
+        planning_tick = simulated_time >= next_planning_time - 1e-12
+        if native_pacer is not None and planning_tick:
+            pacing_overrun_s = native_pacer.wait_until(simulated_time)
         else:
             pacing_overrun_s = 0.0
-        planning_tick = simulated_time >= next_planning_time - 1e-12
         if (
             native_paced is not None
             and planning_tick
@@ -520,22 +525,29 @@ def run_physical_experiment(
                                 measured_execution_s=native_completion.execution_s,
                             )
                         else:
-                            completed_batch, completed_progress, completed_reference = (
-                                native_completion.request.payload
-                            )
+                            (
+                                completed_batch,
+                                completed_progress,
+                                completed_reference,
+                                completed_state,
+                            ) = native_completion.request.payload
                             del completed_batch
-                            accepted_selection = select_candidate(
+                            accepted_selection = select_safe_candidate(
                                 native_completion.scores,
                                 completed_progress,
                                 risk_model.risk_cutoff,
+                                completed_state,
+                                safety_envelope,
                             )
                             accepted_observed_at_s = native_completion.request.observed_at_s
                             accepted_request_id = native_completion.request.request_id
                             accepted_observation_id = native_completion.request.observation_id
-                            reference_selection = select_candidate(
+                            reference_selection = select_safe_candidate(
                                 completed_reference,
                                 completed_progress,
                                 risk_model.risk_cutoff,
+                                completed_state,
+                                safety_envelope,
                             )
                             if (
                                 reference_selection.candidate_index
@@ -552,9 +564,7 @@ def run_physical_experiment(
                                 selected_candidate_index=accepted_selection.candidate_index,
                                 risk_cutoff=risk_model.risk_cutoff,
                                 selected_risk=round(accepted_selection.risk, 9),
-                                selected_progress_score=round(
-                                    accepted_selection.progress_score, 9
-                                ),
+                                selected_progress_score=round(accepted_selection.progress_score, 9),
                                 request_id=native_completion.request.request_id,
                                 event_observation_id=native_completion.request.observation_id,
                                 observation_age_s=round(age_s, 9),
@@ -571,11 +581,10 @@ def run_physical_experiment(
                         episode_id=episode_id,
                         observation_id=current_observation_id,
                         request_id=current_observation_id,
-                        candidate_set_id=configuration.candidate_set_id
-                        or "candidate-set-v1",
+                        candidate_set_id=configuration.candidate_set_id or "candidate-set-v1",
                         model_sha256=risk_model.sha256,
                         observed_at_s=simulated_time,
-                        payload=(feature_batch, progress, reference_risks),
+                        payload=(feature_batch, progress, reference_risks, learning_state),
                     )
                     record(
                         "inference_event",
@@ -606,9 +615,7 @@ def run_physical_experiment(
                                 inference_event_kind="expired",
                                 request_id=accepted_request_id,
                                 event_observation_id=accepted_observation_id,
-                                observation_age_s=round(
-                                    simulated_time - accepted_observed_at_s, 9
-                                ),
+                                observation_age_s=round(simulated_time - accepted_observed_at_s, 9),
                                 episode_id=episode_id,
                                 event_candidate_set_id=configuration.candidate_set_id,
                                 event_model_sha256=risk_model.sha256,
@@ -633,7 +640,7 @@ def run_physical_experiment(
                         candidate_set_id=configuration.candidate_set_id or "candidate-set-v1",
                         model_sha256=risk_model.sha256,
                         observed_at_s=simulated_time,
-                        payload=(tuple(risks), progress),
+                        payload=(tuple(risks), progress, learning_state),
                     )
                     record(
                         "inference_event",
@@ -649,9 +656,15 @@ def run_physical_experiment(
                     virtual_completion, events = virtual_device.consume_latest(simulated_time)
                     record_device_events(events)
                     if virtual_completion is not None:
-                        completed_risks, completed_progress = virtual_completion.request.payload
-                        accepted_selection = select_candidate(
-                            completed_risks, completed_progress, risk_model.risk_cutoff
+                        completed_risks, completed_progress, completed_state = (
+                            virtual_completion.request.payload
+                        )
+                        accepted_selection = select_safe_candidate(
+                            completed_risks,
+                            completed_progress,
+                            risk_model.risk_cutoff,
+                            completed_state,
+                            safety_envelope,
                         )
                         accepted_observed_at_s = virtual_completion.request.observed_at_s
                         age_s = simulated_time - virtual_completion.request.observed_at_s
@@ -662,16 +675,12 @@ def run_physical_experiment(
                             selected_candidate_index=accepted_selection.candidate_index,
                             risk_cutoff=risk_model.risk_cutoff,
                             selected_risk=round(accepted_selection.risk, 9),
-                            selected_progress_score=round(
-                                accepted_selection.progress_score, 9
-                            ),
+                            selected_progress_score=round(accepted_selection.progress_score, 9),
                             request_id=virtual_completion.request.request_id,
                             event_observation_id=virtual_completion.request.observation_id,
                             observation_age_s=round(age_s, 9),
                         )
-                    record_device_events(
-                        virtual_device.submit(inference_request, simulated_time)
-                    )
+                    record_device_events(virtual_device.submit(inference_request, simulated_time))
                     for _ in range(configuration.modeled_device.requests_per_tick - 1):
                         burst_observation_id = observation_id
                         observation_id += 1
@@ -692,9 +701,7 @@ def run_physical_experiment(
                             event_candidate_set_id=burst_request.candidate_set_id,
                             event_model_sha256=burst_request.model_sha256,
                         )
-                        record_device_events(
-                            virtual_device.submit(burst_request, simulated_time)
-                        )
+                        record_device_events(virtual_device.submit(burst_request, simulated_time))
                     if (
                         accepted_selection is not None
                         and accepted_observed_at_s is not None
@@ -707,10 +714,20 @@ def run_physical_experiment(
                         desired_angular = 0.0
                         selection = None
                 else:
-                    selection = select_candidate(risks, progress, risk_model.risk_cutoff)
+                    selection = select_safe_candidate(
+                        risks,
+                        progress,
+                        risk_model.risk_cutoff,
+                        learning_state,
+                        safety_envelope,
+                    )
                 if native_model is not None and native_paced is None and selection is not None:
-                    reference_selection = select_candidate(
-                        reference_risks, progress, risk_model.risk_cutoff
+                    reference_selection = select_safe_candidate(
+                        reference_risks,
+                        progress,
+                        risk_model.risk_cutoff,
+                        learning_state,
+                        safety_envelope,
                     )
                     if reference_selection.candidate_index != selection.candidate_index:
                         command_disagreements += 1
@@ -727,12 +744,13 @@ def run_physical_experiment(
                             selected_risk=round(selection.risk, 9),
                             selected_progress_score=round(selection.progress_score, 9),
                         )
-            stopping_distance = linear_velocity**2 / (
-                2 * configuration.max_braking_deceleration_mps2
-            )
-            forward_clearance = max(0.0, latest_ranges[0] - configuration.rover_radius_m)
-            if linear_velocity > 0 and forward_clearance <= stopping_distance:
-                desired_linear = 0.0
+            if risk_model is None:
+                stopping_distance = linear_velocity**2 / (
+                    2 * configuration.max_braking_deceleration_mps2
+                )
+                forward_clearance = max(0.0, latest_ranges[0] - configuration.rover_radius_m)
+                if linear_velocity > 0 and forward_clearance <= stopping_distance:
+                    desired_linear = 0.0
             commanded_linear_velocity = desired_linear
             commanded_angular_velocity = desired_angular
         now_braking = commanded_linear_velocity < linear_velocity - 1e-12 and linear_velocity > 0
@@ -852,6 +870,11 @@ def run_physical_experiment(
                     "pacing_overruns": pacing_overruns,
                     "maximum_pacing_overrun_s": maximum_pacing_overrun_s,
                     "pacing_overrun_limit_s": configuration.pacing_overrun_limit_s,
+                    "pacing_qos": native_pacer.qos if native_pacer is not None else "missing",
+                    "pacing_clock": (native_pacer.clock if native_pacer is not None else "missing"),
+                    "pacing_realtime_policy": (
+                        native_pacer.realtime_policy if native_pacer is not None else "missing"
+                    ),
                 }
                 if native_paced is not None
                 else None
@@ -917,9 +940,7 @@ def _target_visit_evidence(
     observations: list[InspectionObservation],
     outcome: MissionOutcome,
 ) -> tuple[TargetVisitEvidence, ...]:
-    incomplete_status: Literal[
-        "not_visited_timeout", "not_visited_collision", "unreachable"
-    ]
+    incomplete_status: Literal["not_visited_timeout", "not_visited_collision", "unreachable"]
     if outcome == "timed_out":
         incomplete_status = "not_visited_timeout"
     elif outcome == "collision":
@@ -962,11 +983,7 @@ def _target_setup_failure(
             required_ordinal=index,
             pose=None,
             dwell_completed=False,
-            status=(
-                outcome
-                if target_id == failed_target_id
-                else "not_visited_setup_failure"
-            ),
+            status=(outcome if target_id == failed_target_id else "not_visited_setup_failure"),
         )
         for index, target_id in enumerate(target_ids)
     )
@@ -1012,8 +1029,7 @@ def _resolve_mission_targets(
             visual_matches = tuple(
                 visual_object
                 for visual_object in scenario.visual_objects
-                if visual_object.object_id == target_id
-                or visual_object.label.lower() == normalized
+                if visual_object.object_id == target_id or visual_object.label.lower() == normalized
             )
             matches = tuple(_visual_inspection_pose(item) for item in visual_matches)
         if not matches:
@@ -1141,8 +1157,14 @@ def _range_readings(
     return tuple(readings)
 
 
-def _load_default_risk_model() -> RiskModelArtifact:
-    path = Path(__file__).resolve().parents[2] / "artifacts" / "issue-8" / "risk-model-v1.json"
+def _load_risk_model_for_request(request: RunRequest) -> RiskModelArtifact:
+    version = request.configuration.model_artifact_version or "risk-model-v1"
+    if version == "risk-model-v1":
+        path = Path(__file__).resolve().parents[2] / "artifacts" / "issue-8" / "risk-model-v1.json"
+    elif version == "risk-model-v2":
+        path = Path(__file__).resolve().parents[2] / "artifacts" / "issue-22" / "risk-model-v2.json"
+    else:
+        raise ValueError(f"unsupported risk model artifact version: {version}")
     return load_risk_model(path)
 
 

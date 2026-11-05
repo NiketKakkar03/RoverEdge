@@ -1,0 +1,26 @@
+{
+  "preset-cluttered-v1": {
+    "mission_outcome": "timed_out",
+    "model_sha256": "2ea59b362c2eb275608b72874ed6f9397c79be78829840faf649fe12bd735eee",
+    "risk_cutoff": 0.005,
+    "safety_envelope_version": "sensor-stopping-v2",
+    "test_verdict": "failed",
+    "timing_provenance": null
+  },
+  "preset-narrow-v1": {
+    "mission_outcome": "timed_out",
+    "model_sha256": "2ea59b362c2eb275608b72874ed6f9397c79be78829840faf649fe12bd735eee",
+    "risk_cutoff": 0.005,
+    "safety_envelope_version": "sensor-stopping-v2",
+    "test_verdict": "failed",
+    "timing_provenance": null
+  },
+  "preset-open-v2": {
+    "mission_outcome": "completed",
+    "model_sha256": "2ea59b362c2eb275608b72874ed6f9397c79be78829840faf649fe12bd735eee",
+    "risk_cutoff": 0.005,
+    "safety_envelope_version": "sensor-stopping-v2",
+    "test_verdict": "passed",
+    "timing_provenance": null
+  }
+}

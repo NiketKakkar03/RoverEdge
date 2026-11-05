@@ -14,6 +14,7 @@ from roveredge.learning import (
     save_risk_model,
     train_risk_model,
 )
+from roveredge.safety import DEFAULT_SAFETY_ENVELOPE
 
 
 def main() -> None:
@@ -59,6 +60,11 @@ def main() -> None:
         "states": state_count,
         "selected_risk_cutoff": result.artifact.risk_cutoff,
         "model_sha256": result.artifact.sha256,
+        "selection_policy": {
+            "version": "learned-risk-plus-sensor-stopping-v1",
+            "safety_envelope": asdict(DEFAULT_SAFETY_ENVELOPE),
+            "cutoff_selection_split": "validation",
+        },
         "metric_definitions": {
             "false_negatives": "selected accepted commands whose rollout label is collision",
             "unnecessary_stops": "brake selections where a moving collision-free candidate exists",

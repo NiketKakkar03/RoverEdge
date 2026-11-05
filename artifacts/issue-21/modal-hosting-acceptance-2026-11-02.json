@@ -1,0 +1,63 @@
+{
+  "schema": "roveredge-modal-hosting-acceptance-v1",
+  "checked_on": "2026-11-02",
+  "deployment_kind": "Modal portable hosting",
+  "persistence_check": "Modal App rolling rollover",
+  "artifact_volume": "roveredge-artifacts-v1",
+  "artifact_mount_path": "/roveredge-artifacts",
+  "status_check": {
+    "endpoint": "GET /api/hosting/status",
+    "http_status": 200,
+    "apple_accelerate_live": "unavailable_in_portable_hosting",
+    "credentials": "server_process_only",
+    "execution_labels": [
+      "live_hosted",
+      "recorded_local",
+      "modeled"
+    ]
+  },
+  "web_ui_check": {
+    "root_endpoint": "GET /",
+    "root_http_status": 200,
+    "root_content_type": "text/html; charset=utf-8",
+    "page_title": "RoverEdge · Deterministic inspection replay",
+    "production_script_http_status": 200
+  },
+  "artifacts": [
+    {
+      "execution_label": "live_hosted",
+      "run_id": "2f8d61a8-fc0f-4782-a2cf-a2f7c25af2dd",
+      "created_endpoint": "POST /api/hosted/runs",
+      "retrieved_endpoint": "GET /api/hosted/runs/{run_id}",
+      "mission_outcome": "completed",
+      "test_verdict": "passed",
+      "sha256": "9edc4d15949ccd43a9c62a74fcf217f54976ae94feb84f279cfc084db91ebfba",
+      "byte_equivalent_after_rollover": true
+    },
+    {
+      "execution_label": "recorded_local",
+      "run_id": "8cb86d3d-2b62-4db2-bacd-6139b9cbf844",
+      "created_endpoint": "POST /api/hosted/saved-runs",
+      "retrieved_endpoint": "GET /api/hosted/runs/{run_id}",
+      "mission_outcome": "completed",
+      "test_verdict": "passed",
+      "sha256": "905ad7179dbea257c16373eb64a412518d1f7e93ffc2debe74ace9394e4af63c",
+      "byte_equivalent_after_rollover": true
+    },
+    {
+      "execution_label": "modeled",
+      "run_id": "0fdf2595-4b14-41d9-be49-58fae8ef140b",
+      "created_endpoint": "POST /api/hosted/saved-runs",
+      "retrieved_endpoint": "GET /api/hosted/runs/{run_id}",
+      "mission_outcome": "completed",
+      "test_verdict": "passed",
+      "sha256": "c30d824206bc3cf7aab1f5db79a81e8ec65d43ce7f7f129627fa305fe7cabf90",
+      "byte_equivalent_after_rollover": true
+    }
+  ],
+  "credential_handling": "No credential values, authorization headers, signed URLs, or provider-model responses are recorded.",
+  "limitations": [
+    "This verifies only portable hosting and artifact persistence; it makes no claim that Apple-native execution ran in Modal.",
+    "No Meta or Baseten model-provider call was made during this acceptance."
+  ]
+}

@@ -4,9 +4,18 @@ import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
+from typing import cast
 
-from . import _native_runtime  # type: ignore[attr-defined]
 from .learning import RiskModelArtifact
+
+_native_runtime: ModuleType | None
+try:
+    from . import _native_runtime as _loaded_native_runtime  # type: ignore[attr-defined]
+except ImportError:
+    _native_runtime = None
+else:
+    _native_runtime = cast(ModuleType, _loaded_native_runtime)
 
 Matrix = Sequence[Sequence[float]]
 
@@ -20,7 +29,13 @@ class NativeInferenceResult:
 
 
 def accelerate_available() -> bool:
-    return bool(_native_runtime.accelerate_available())
+    return _native_runtime is not None and bool(_native_runtime.accelerate_available())
+
+
+def _runtime() -> ModuleType:
+    if _native_runtime is None:
+        raise RuntimeError("native runtime is unavailable on this host")
+    return _native_runtime
 
 
 def hardware_model() -> str:
@@ -35,19 +50,17 @@ def hardware_model() -> str:
 
 
 def naive_matmul(left: Matrix, right: Matrix) -> tuple[tuple[float, ...], ...]:
-    return tuple(tuple(row) for row in _native_runtime.naive_matmul(left, right))
+    return tuple(tuple(row) for row in _runtime().naive_matmul(left, right))
 
 
 def accelerate_matmul(left: Matrix, right: Matrix) -> tuple[tuple[float, ...], ...]:
-    return tuple(tuple(row) for row in _native_runtime.accelerate_matmul(left, right))
+    return tuple(tuple(row) for row in _runtime().accelerate_matmul(left, right))
 
 
 def blocked_matmul(
     left: Matrix, right: Matrix, *, block_size: int
 ) -> tuple[tuple[float, ...], ...]:
-    return tuple(
-        tuple(row) for row in _native_runtime.blocked_matmul(left, right, block_size)
-    )
+    return tuple(tuple(row) for row in _runtime().blocked_matmul(left, right, block_size))
 
 
 def parallel_blocked_matmul(
@@ -55,9 +68,7 @@ def parallel_blocked_matmul(
 ) -> tuple[tuple[float, ...], ...]:
     return tuple(
         tuple(row)
-        for row in _native_runtime.parallel_blocked_matmul(
-            left, right, block_size, worker_count
-        )
+        for row in _runtime().parallel_blocked_matmul(left, right, block_size, worker_count)
     )
 
 
@@ -75,7 +86,7 @@ class NativeRiskModel:
         self.backend = backend
         self.block_size = block_size
         self.worker_count = worker_count
-        self._runtime = _native_runtime.NativeRiskModel(
+        self._runtime = _runtime().NativeRiskModel(
             artifact.normalization.mean,
             artifact.normalization.standard_deviation,
             artifact.weights,
@@ -95,6 +106,23 @@ class NativeRiskModel:
         )
 
 
+class NativePlanningPacer:
+    """Native monotonic planning clock that waits without holding Python's GIL."""
+
+    def __init__(self) -> None:
+        self._runtime = _runtime().NativePlanningPacer()
+        self.qos = "unknown"
+        self.clock = "unknown"
+        self.realtime_policy = "unknown"
+
+    def wait_until(self, elapsed_seconds: float) -> float:
+        result = self._runtime.wait_until(elapsed_seconds)
+        self.qos = str(result["qos"])
+        self.clock = str(result["clock"])
+        self.realtime_policy = str(result["realtime_policy"])
+        return float(result["overrun_s"])
+
+
 def runtime_provenance(
     model_sha256: str,
     *,
@@ -104,7 +132,7 @@ def runtime_provenance(
     timing_provenance: str = "not_measured",
     include_comparison: bool = True,
 ) -> dict[str, str]:
-    metadata = dict(_native_runtime.runtime_metadata(backend, block_size, worker_count))
+    metadata = dict(_runtime().runtime_metadata(backend, block_size, worker_count))
     provenance = {
         "backend": backend,
         "kernel": str(metadata["kernel"]),
@@ -127,9 +155,7 @@ def runtime_provenance(
         )
         if comparison_path.is_file():
             comparison = json.loads(comparison_path.read_text())
-            provenance["comparison_evidence"] = (
-                "artifacts/issue-10/native-blocked-comparison.json"
-            )
+            provenance["comparison_evidence"] = "artifacts/issue-10/native-blocked-comparison.json"
             provenance["comparison_correctness"] = str(comparison["correctness_gate"])
             provenance["saved_input_sha256"] = str(comparison["saved_input_sha256"])
             if comparison["correctness_gate"] == "passed" and comparison["latency"]:
@@ -149,9 +175,7 @@ def runtime_provenance(
         )
         if comparison_path.is_file():
             comparison = json.loads(comparison_path.read_text())
-            provenance["comparison_evidence"] = (
-                "artifacts/issue-11/native-parallel-comparison.json"
-            )
+            provenance["comparison_evidence"] = "artifacts/issue-11/native-parallel-comparison.json"
             provenance["comparison_correctness"] = str(comparison["correctness_gate"])
             provenance["saved_input_sha256"] = str(comparison["saved_input_sha256"])
             if comparison["correctness_gate"] == "passed" and comparison["latency"]:
@@ -160,9 +184,7 @@ def runtime_provenance(
                     comparison["latency"]["native-blocked"]["median_us"]
                 )
                 key = f"native-parallel-blocked-{worker_count}"
-                provenance["parallel_median_us"] = str(
-                    comparison["latency"][key]["median_us"]
-                )
+                provenance["parallel_median_us"] = str(comparison["latency"][key]["median_us"])
     if backend == "native-accelerate" and include_comparison:
         comparison_path = (
             Path(__file__).resolve().parents[2]

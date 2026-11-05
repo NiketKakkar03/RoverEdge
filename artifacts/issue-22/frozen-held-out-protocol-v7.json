@@ -1,0 +1,40 @@
+{
+  "schema": "roveredge-held-out-protocol-freeze-v7",
+  "approval_status": "approved_frozen",
+  "execution_status": "not_run",
+  "approval_record": {
+    "authority": "user_explicit_approval",
+    "approved_on": "2026-11-03",
+    "request": "Go ahead with this then"
+  },
+  "proposal_sha256": "7a0f790db19dd621ad1593adc0f3f153877b5c927acc715c79527bf02193bf2b",
+  "held_out_manifest_file_sha256": "27b03f38f2f3c31c23d47f7e7209fb52267d8d95d535ff067e8d55eaf17fdffc",
+  "model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
+  "risk_cutoff": 0.0001,
+  "selection_policy_version": "learned-risk-plus-sensor-stopping-v1",
+  "safety_envelope_version": "sensor-stopping-v1",
+  "mission_scenario_generator_version": "held-out-mission-scenario-generator-v7",
+  "parallel_runtime": "persistent-model-owned-worker-pool-v1",
+  "execution_exclusivity": "single-writer advisory lock required",
+  "native_isolation": "fresh spawned worker per measured run; supervisor writes evidence after return",
+  "final_test_families": ["route-final-refresh6-family-00", "route-final-refresh6-family-01", "route-final-refresh6-family-02"],
+  "acceptance_criteria": {
+    "maximum_false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3,
+    "numerical_tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(native naive)",
+    "maximum_command_disagreements": 0,
+    "native_pacing_overrun_limit_s": 0.02
+  },
+  "scheduled_work": {
+    "virtual_runs": 120,
+    "native_closed_loop_runs": 60,
+    "saved_input_batches_per_backend_per_repetition": 1000,
+    "saved_input_repetitions": 3
+  },
+  "stopping_rules": [
+    "No outcome-based early stopping.",
+    "Stop for invalid evidence, drift, infrastructure failure, failed prerequisites, concurrent writer detection, or user interruption.",
+    "Retain every completed artifact and do not tune from final results."
+  ]
+}

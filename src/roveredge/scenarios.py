@@ -390,7 +390,9 @@ def physical_run_request(
         target=KnownTargetFixture(
             kind="known_target_fixture",
             target_id=(
-                scenario.visual_objects[0].object_id
+                "red toolbox"
+                if "perception" in scenario_version
+                else scenario.visual_objects[0].object_id
                 if scenario_version.startswith("scene-") and scenario.visual_objects
                 else "preset-storage-container"
             ),

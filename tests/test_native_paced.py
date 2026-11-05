@@ -1,14 +1,15 @@
 from concurrent.futures import Executor, Future
+from pathlib import Path
 
 from roveredge.device import InferenceRequest
+from roveredge.learning import load_risk_model
+from roveredge.native import NativePlanningPacer, NativeRiskModel
 from roveredge.native_paced import NativePacedExecutor, TimedScores
 
 
 class ManualExecutor(Executor):
     def __init__(self) -> None:
-        self.calls: list[
-            tuple[Future[TimedScores], tuple[tuple[float, ...], ...]]
-        ] = []
+        self.calls: list[tuple[Future[TimedScores], tuple[tuple[float, ...], ...]]] = []
 
     def submit(self, function, batch):  # type: ignore[no-untyped-def]
         future: Future[TimedScores] = Future()
@@ -68,3 +69,30 @@ def test_native_paced_executor_reports_strict_expiry_boundary_and_newer_preceden
 
     executor.note_accepted_observation(3)
     assert executor.accept(completion, 0.05, maximum_age_s=1.0) is None
+
+
+def test_native_planning_pacer_uses_a_monotonic_native_clock() -> None:
+    pacer = NativePlanningPacer()
+
+    assert pacer.wait_until(0.01) <= 0.02
+    assert pacer.clock == "std::chrono::steady_clock"
+    assert pacer.qos in {"user_interactive", "not_available", "request_failed"}
+    assert pacer.realtime_policy in {
+        "time_constraint_accepted",
+        "time_constraint_rejected",
+        "not_available",
+    }
+
+
+def test_parallel_inference_sustains_nonfinal_native_pacing_limit() -> None:
+    artifact = load_risk_model(Path("artifacts/issue-8/risk-model-v1.json"))
+    runtime = NativeRiskModel(artifact, backend="native-parallel-blocked", worker_count=4)
+    batch = tuple(tuple(float(row + column) / 10 for column in range(24)) for row in range(8))
+    pacer = NativePlanningPacer()
+
+    overruns = []
+    for tick in range(1, 41):
+        runtime.evaluate(batch)
+        overruns.append(pacer.wait_until(tick * 0.005))
+
+    assert max(overruns) <= 0.02

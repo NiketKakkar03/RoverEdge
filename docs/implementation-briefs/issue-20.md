@@ -32,3 +32,11 @@ agree.
 - API tests cover ZIP download and server-side reproduction; browser tests cover run and comparison
   downloads.
 - `make check` covers the full Python/browser suites, native build, type checks, lint, and web build.
+
+## Acceptance — November 2, 2026
+
+The checked-in modeled queue-policy comparison bundle reproduced two runs with
+`scripts/reproduce_evidence.py`. Focused evidence/demo tests and browser download tests passed,
+followed by a successful `make check`: 159 Python tests, mypy, Ruff, 22 browser tests, and the
+production web build all passed. The sanitized acceptance record is in
+`artifacts/issue-20/acceptance-2026-11-02.json`.

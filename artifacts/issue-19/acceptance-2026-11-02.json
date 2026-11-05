@@ -1,0 +1,28 @@
+{
+  "schema": "roveredge-live-mission-engineer-acceptance-v1",
+  "checked_on": "2026-11-02",
+  "source_label": "baseten_live",
+  "provider": "baseten",
+  "model": "meta-models/muse-spark-open-1026",
+  "provider_calls_used": 2,
+  "baseline_run_id": "1a38340e-4603-4506-afbe-3cc70050efb7",
+  "follow_up_run_ids": [
+    "8783972c-ee72-4dd3-86a8-ce9c3a8f08a3"
+  ],
+  "comparison_valid": [
+    true
+  ],
+  "finding": "cause_not_established",
+  "verification": {
+    "full_check": "make check",
+    "python_tests": "163 passed",
+    "mypy": "passed",
+    "ruff": "passed",
+    "browser_tests": "22 passed",
+    "web_build": "passed"
+  },
+  "limitations": [
+    "One bounded controlled comparison cannot establish a general cause.",
+    "No credential values, authorization headers, raw provider responses, or Meta/SAM call data are retained."
+  ]
+}
