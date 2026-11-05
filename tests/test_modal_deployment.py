@@ -12,12 +12,13 @@ def test_modal_wrapper_declares_explicit_durable_hosting_contract() -> None:
     assert 'ARTIFACT_MOUNT_PATH = "/roveredge-artifacts"' in source
     assert "modal.Volume.from_name(ARTIFACT_VOLUME_NAME, create_if_missing=False)" in source
     assert '"ROVEREDGE_ARTIFACT_DIR": ARTIFACT_MOUNT_PATH' in source
+    assert '"ROVEREDGE_DEPLOYMENT_GATE": "modal_deployed"' in source
     assert "volumes={ARTIFACT_MOUNT_PATH: artifact_volume}" in source
     assert "secrets=[provider_secret]" in source
     assert "artifact_volume.commit()" in source
     assert 'request.url.path in _ARTIFACT_WRITING_PATHS' in source
     assert "modal deploy" not in source
-    assert source.index('.env({"PYTHONPATH"') < source.index('.add_local_dir("src", "/root/src")')
+    assert source.index(".env(") < source.index('.add_local_dir("src", "/root/src")')
     assert '.add_local_dir("dist", "/root/dist")' in source
 
 
