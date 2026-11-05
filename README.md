@@ -8,9 +8,6 @@ mission execution with an interactive 3D replay and a bounded Meta-powered missi
 can inspect a completed run, test one controlled change, and explain whether the recorded evidence
 shows an improvement.
 
-**Live demo:**
-[roveredge-portable-hosting](https://niketkakkar03--roveredge-portable-hosting-roveredge-asgi-app.us-east.modal.run/)
-
 > An AI model may propose and explain an experiment. RoverEdge executes the experiment and decides
 > whether the evidence supports the conclusion.
 
@@ -165,9 +162,6 @@ execution. Native saved-input timing is not presented as closed-loop robot laten
 RoverEdge includes [`modal_app.py`](modal_app.py), which packages the production browser bundle and
 FastAPI application, mounts a named persistent Volume, and commits hosted run artifacts after
 writes.
-
-The current public deployment is available at
-[niketkakkar03--roveredge-portable-hosting-roveredge-asgi-app.us-east.modal.run](https://niketkakkar03--roveredge-portable-hosting-roveredge-asgi-app.us-east.modal.run/).
 
 Build the web application before deployment:
 
