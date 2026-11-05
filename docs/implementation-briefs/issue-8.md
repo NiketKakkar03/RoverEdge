@@ -42,7 +42,16 @@ acceptance threshold and the score is not called a calibrated probability.
   and whether Modal was used. This implementation uses local CPU training and records
   `modal_execution: not_used`.
 
-The untouched final manifest is retained for issue #22. No final-test metric is computed here.
+The original `risk-dataset-v1` corpus sampled waypoint direction independently of the rover heading.
+With the fixed forward-oriented candidate set, even an oracle could reach only 0.218 mean safe
+progress on its validation split, making the proposed 0.3 requirement mathematically infeasible.
+`risk-dataset-v2` therefore uses new, disjoint route-directed train/validation/final families,
+256 states per family, and local waypoints ahead of the rover with lateral recovery variation.
+The larger training corpus retains difficult near-obstacle states rather than selecting a model by
+seed. This makes the progress metric evaluate route-following decisions rather than arbitrary
+reverse-direction goals; it does not add hidden obstacle geometry to the learned features. The v1
+final set is retired and must not be reused for a v2 claim. No v2 final-test metric is computed
+here.
 
 ## Public interfaces and structure
 

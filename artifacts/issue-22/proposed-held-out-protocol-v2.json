@@ -1,0 +1,82 @@
+{
+  "schema": "roveredge-held-out-protocol-v2",
+  "approval_status": "approved_by_user_continuation",
+  "execution_status": "not_run",
+  "supersedes": "artifacts/issue-22/proposed-held-out-protocol-v1.json",
+  "reason": "The v1 final families were consumed by a protocol-valid stop caused by invalid host pacing; a fresh independent final set is required.",
+  "frozen_candidate_inputs": {
+    "dataset_manifest_file_sha256": "c3144ae012081848fd22aeb8ac612ab6d178eeb8b94dc862255c40f53a18bfee",
+    "held_out_manifest_path": "artifacts/issue-22/held-out-manifest-v2.json",
+    "held_out_manifest_file_sha256": "a726be29bfb5daaa88fe452c26fb8cd0569926dbfa68c671ced272acbad810e5",
+    "final_test_families": [
+      "route-final-refresh1-family-00",
+      "route-final-refresh1-family-01",
+      "route-final-refresh1-family-02"
+    ],
+    "final_test_split_sha256": "5e5d8ece3f0ebee57e42b840112d319ac3131db5a1787576b2d01e2a779fddd8",
+    "model_artifact_file_sha256": "2812484a022f541bbb3ede63c1a63e58bf986f73c500f606c5dbf351ba88f005",
+    "model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
+    "risk_cutoff": 0.0001,
+    "selection_policy_version": "learned-risk-plus-sensor-stopping-v1",
+    "safety_envelope_version": "sensor-stopping-v1",
+    "mission_scenario_generator_version": "held-out-mission-scenario-generator-v2"
+  },
+  "acceptance_criteria": {
+    "maximum_false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3,
+    "numerical_tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(native naive)",
+    "maximum_command_disagreements": 0,
+    "native_pacing_overrun_limit_s": 0.02
+  },
+  "scheduled_work": {
+    "virtual_runs": 120,
+    "native_closed_loop_runs": 60,
+    "saved_input_batches_per_backend_per_repetition": 1000,
+    "saved_input_repetitions": 3
+  },
+  "preflight": {
+    "non_final_fixture": "preset-open-v2",
+    "seconds_per_backend": 5.0,
+    "backends": [
+      "native-naive",
+      "native-blocked",
+      "native-parallel-blocked",
+      "native-accelerate"
+    ],
+    "valid_when": "Every planning tick on every backend records pacing_overrun_s <= 0.02 seconds and zero command disagreements."
+  },
+  "schedule": {
+    "virtual_conditions": [
+      "uncongested-fifo",
+      "uncongested-latest-pending",
+      "steady-congestion-fifo",
+      "steady-congestion-latest-pending",
+      "burst-congestion-fifo",
+      "burst-congestion-latest-pending"
+    ],
+    "virtual_indices_per_condition": 20,
+    "family_allocation": "family_order[index mod 3]",
+    "native_order": "family, repetition 0..4, backend order",
+    "backend_order": [
+      "native-naive",
+      "native-blocked",
+      "native-parallel-blocked",
+      "native-accelerate"
+    ]
+  },
+  "evidence_policy": {
+    "preserve_every_request_scenario_trace_result_and_failure": true,
+    "run_files": "gzip-compressed JSON",
+    "timing_provenance_required": true,
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 20261102,
+    "exports": ["browser_json", "json_report", "csv_run_index", "trace_result_json_gz", "manifest"]
+  },
+  "stopping_rules": [
+    "Do not stop for favorable or unfavorable results.",
+    "Stop immediately for invalid evidence, configuration drift, infrastructure failure, or failed prerequisites.",
+    "Retain every completed result and write partial exports after a stop.",
+    "Do not tune from final results."
+  ]
+}

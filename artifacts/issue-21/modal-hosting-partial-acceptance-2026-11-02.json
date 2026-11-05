@@ -1,0 +1,40 @@
+{
+  "schema": "roveredge-modal-hosting-partial-acceptance-v1",
+  "checked_on": "2026-11-02",
+  "deployment_kind": "Modal portable hosting",
+  "deployment_gate": "incomplete",
+  "artifact_volume": "roveredge-artifacts-v1",
+  "artifact_mount_path": "/roveredge-artifacts",
+  "confirmed_checks": [
+    {
+      "endpoint": "GET /api/hosting/status",
+      "http_status": 200,
+      "apple_accelerate_live": "unavailable_in_portable_hosting"
+    },
+    {
+      "endpoint": "GET /api/scenarios/preset-open",
+      "http_status": 200
+    },
+    {
+      "endpoint": "POST /api/hosted/runs",
+      "http_status": 200,
+      "observed_duration_ms": 782
+    },
+    {
+      "endpoint": "GET /api/hosted/runs/{run_id}",
+      "http_status": 200,
+      "observed_duration_ms": 49
+    }
+  ],
+  "unverified_checks": [
+    "The created run ID was not retained in this sanitized record, so byte-equivalence of the created and reloaded artifacts is not established.",
+    "No operator-authorized redeploy or restart has occurred after creation, so persistence across a Modal App restart is not established.",
+    "No recorded_local fallback import has been verified.",
+    "No modeled fallback import has been verified."
+  ],
+  "credential_handling": "No credential values, authorization headers, signed URLs, or provider responses are recorded.",
+  "limitations": [
+    "A successful retrieval before a restart does not satisfy the durable-volume deployment gate.",
+    "This record is sanitized from operator-observed public endpoint results and is not a provider request log."
+  ]
+}

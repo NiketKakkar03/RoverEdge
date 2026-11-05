@@ -1,0 +1,3 @@
+# Keep measured execution and modeled device time distinct
+
+RoverEdge studies how computation delays affect rover behavior, including conditions that may not occur with its small model on the developer's Mac. Native experiments use actual execution measurements, while virtual experiments use explicitly declared device durations without adding host execution time; reports and comparisons preserve that distinction. This supports reproducible congestion experiments without presenting hypothetical device behavior as measured hardware performance, and allows the hosted demo to replay clearly labeled Apple-specific results.

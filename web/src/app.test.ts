@@ -4,6 +4,7 @@ import { fireEvent, waitFor } from "@testing-library/dom";
 import { describe, expect, test, vi } from "vitest";
 
 import { httpApi, mountApp, type RoverEdgeApi, type RunResult, type Scenario } from "./app";
+import { summarizeRun, explainRun } from "./run-summary";
 
 const configuration = {
   simulation_step_s: 0.05,
@@ -176,9 +177,91 @@ const collisionResult: RunResult = {
 };
 
 describe("mission replay application", () => {
+  test("investigation requires explicit consent and displays live evidence safely", async () => {
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+    const fetch = vi.fn(async () => ({ ok: true, json: async () => ({model:"test-model",provider_calls_used:2,provider_summary:"<script>untrusted</script>",investigation:{explanation:{what_happened:"Stopped",tested_change:"Queue policy",whether_it_helped:"Unchanged"},follow_up_runs_used:1}}) }));
+    vi.stubGlobal("fetch", fetch);
+    await mountApp(root, {getScenarios:async()=>[scenario],run:async()=>result});
+    fireEvent.click(root.querySelector("[data-action='start']")!);
+    await waitFor(() => expect(root.querySelector<HTMLButtonElement>("[data-action='investigate']")!.disabled).toBe(false));
+    fireEvent.click(root.querySelector("[data-action='investigate']")!);
+    expect(fetch).not.toHaveBeenCalled();
+    fireEvent.click(root.querySelector("[data-action='provider-consent']")!);
+    fireEvent.click(root.querySelector("[data-action='investigate']")!);
+    await waitFor(() => expect(root.querySelector("[data-field='investigation-result']")!.textContent).toContain("Unchanged"));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(root.querySelector("[data-field='investigation-result'] script")).toBeNull();
+    vi.unstubAllGlobals();
+  });
+  test("summary excludes rejected inference ages and explains expected failures", () => {
+    const sample: RunResult = { ...timeoutResult, trace: [
+      { ...result.trace[0]!, kind: "control_decision", observation_age_s: 0.05 },
+      { ...result.trace[1]!, kind: "inference_event", observation_age_s: 4 },
+      { ...result.trace[2]!, kind: "control_decision", observation_age_s: 0.1 },
+    ] };
+    expect(summarizeRun(sample).meanAge).toBeCloseTo(0.075);
+    expect(summarizeRun(sample).maxAge).toBe(0.1);
+    expect(summarizeRun(sample).decisions).toBe(2);
+    expect(explainRun(sample)).toContain("Expected outcome: timed out");
+  });
+
+  test("scenario switch clears previous result and disables investigation", async () => {
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+    await mountApp(root, {
+      getScenarios: async () => [scenario, {...scenario, scenario_version: "second"}],
+      run: async (request) => ({...result, request}),
+    });
+    fireEvent.click(root.querySelector("[data-action='start']")!);
+    await waitFor(() => expect(root.querySelector("[data-field='mission-outcome-primary']")!.textContent).toBe("completed"));
+    fireEvent.change(root.querySelector("[data-action='scenario']")!, {target:{value:"second"}});
+    expect(root.querySelector("[data-field='mission-outcome-primary']")!.textContent).toBe("No run for this scenario");
+    expect(root.querySelector<HTMLButtonElement>("[data-action='investigate']")!.disabled).toBe(true);
+  });
+  test("guided queue comparison changes only queue policy and shows actual outcomes", async () => {
+    const requests: Array<RunResult["request"]> = [];
+    const api: RoverEdgeApi = {
+      getScenarios: async () => [scenario],
+      run: async (request) => {
+        requests.push(request);
+        return {
+          ...timeoutResult,
+          run_id: `queue-${requests.length}`,
+          request,
+          inference_summary: { timing_provenance: "modeled" },
+        };
+      },
+    };
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='queue-comparison']")!);
+    await waitFor(() => expect(root.querySelector("[data-field='story-result']")?.textContent)
+      .toContain("FIFO: timed out. Latest pending: timed out."));
+    expect(requests.map((request) => request.configuration.modeled_device?.queue_policy)).toEqual([
+      "fifo", "latest_pending",
+    ]);
+    expect(root.querySelector("[data-field='comparison-validity']")?.textContent).toContain(
+      "Controlled comparison valid",
+    );
+  });
+
   test("starts a run and displays recorded phases and terminal evidence", async () => {
     const api: RoverEdgeApi = {
       getScenarios: async () => [scenario],
+      getHeldOutReadiness: async () => ({
+        status: "awaiting_quality_review",
+        protocol_approval_status: "pending_quality_threshold_review",
+        final_test_families: ["final-family-00", "final-family-01", "final-family-02"],
+        required_gates: {
+          validation_quality: "not_met",
+          live_provider_and_agent: "not_run",
+        },
+      }),
       run: async (request) =>
         request.expected_mission_outcome === "timed_out" ? timeoutResult : result,
     };
@@ -225,6 +308,12 @@ describe("mission replay application", () => {
     expect(root.querySelector("[data-field='configuration']")?.textContent).toContain(
       "32768 B modeled memory budget",
     );
+    expect(root.querySelector("[data-field='held-out-readiness']")?.textContent).toContain(
+      "awaiting_quality_review",
+    );
+    expect(root.querySelector("[data-field='held-out-readiness']")?.textContent).toContain(
+      "validation quality: not_met",
+    );
     for (const phase of phases) {
       expect(root.querySelector("[data-field='phases']")?.textContent).toContain(phase);
     }
@@ -235,6 +324,40 @@ describe("mission replay application", () => {
     });
     expect(root.querySelector("[data-field='verdict']")?.textContent).toContain("passed");
     expect(root.querySelector("[data-field='expectation']")?.textContent).toContain("timed_out");
+  });
+
+  test("downloads run and comparison evidence from recorded results", async () => {
+    const exportRun = vi.fn(async () => new Blob(["run"]));
+    const exportComparison = vi.fn(async () => new Blob(["comparison"]));
+    const api: RoverEdgeApi = {
+      getScenarios: async () => [scenario],
+      run: async (request) =>
+        request.expected_mission_outcome === "timed_out" ? timeoutResult : result,
+      exportRun,
+      exportComparison,
+    };
+    const createObjectURL = vi.fn(() => "blob:roveredge");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    document.body.innerHTML = '<main id="app"></main>';
+    HTMLCanvasElement.prototype.getContext = () => null;
+    const root = document.querySelector<HTMLElement>("#app")!;
+
+    await mountApp(root, api);
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='start']")!);
+    await waitFor(() => expect(exportRun).not.toHaveBeenCalled());
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='export-run']")!);
+    await waitFor(() => expect(exportRun).toHaveBeenCalledWith(result));
+
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='timeout']")!);
+    await waitFor(() => {
+      expect(root.querySelector("[data-field='outcome']")?.textContent).toContain("timed_out");
+    });
+    fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='export-comparison']")!);
+    await waitFor(() => expect(exportComparison).toHaveBeenCalledWith(result, timeoutResult, undefined));
+    expect(createObjectURL).toHaveBeenCalledTimes(2);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
   });
 
   test("selects a fixed obstacle scenario and runs its server-owned request", async () => {
@@ -1250,6 +1373,14 @@ describe("mission replay application", () => {
           },
         }),
       )
+      .mockResolvedValueOnce(
+        Response.json({
+          status: "awaiting_quality_review",
+          protocol_approval_status: "pending_quality_threshold_review",
+          final_test_families: ["final-family-00", "final-family-01", "final-family-02"],
+          required_gates: { validation_quality: "not_met" },
+        }),
+      )
       .mockResolvedValueOnce(Response.json(result));
     vi.stubGlobal("fetch", fetchMock);
     document.body.innerHTML = '<main id="app"></main>';
@@ -1258,12 +1389,13 @@ describe("mission replay application", () => {
 
     await mountApp(root, httpApi);
     fireEvent.click(root.querySelector<HTMLButtonElement>("[data-action='start']")!);
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4));
 
     expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/scenarios");
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/native-comparisons/accelerate");
-    expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/runs");
-    const requestOptions = fetchMock.mock.calls[2]?.[1];
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/evaluations/held-out");
+    expect(fetchMock.mock.calls[3]?.[0]).toBe("/api/runs");
+    const requestOptions = fetchMock.mock.calls[3]?.[1];
     expect(JSON.parse(String(requestOptions?.body))).toEqual(scenario.default_run_request);
     vi.unstubAllGlobals();
   });

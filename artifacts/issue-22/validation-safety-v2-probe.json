@@ -1,0 +1,66 @@
+{
+  "sensor-stopping-v1@0.0001": {
+    "false_negatives": 0,
+    "mean_safe_progress_score": 0.3339251055009594,
+    "states": 768,
+    "unnecessary_stop_rate": 0.07552083333333333,
+    "unnecessary_stops": 58,
+    "unsafe_turn_state_indices": []
+  },
+  "sensor-stopping-v2@0.0001": {
+    "false_negatives": 0,
+    "mean_safe_progress_score": 0.33355414548909357,
+    "states": 768,
+    "unnecessary_stop_rate": 0.08333333333333333,
+    "unnecessary_stops": 64,
+    "unsafe_turn_state_indices": []
+  },
+  "sensor-stopping-v2@0.0002": {
+    "false_negatives": 0,
+    "mean_safe_progress_score": 0.3357358713000363,
+    "states": 768,
+    "unnecessary_stop_rate": 0.08723958333333333,
+    "unnecessary_stops": 67,
+    "unsafe_turn_state_indices": []
+  },
+  "sensor-stopping-v2@0.0005": {
+    "false_negatives": 0,
+    "mean_safe_progress_score": 0.3402741413734135,
+    "states": 768,
+    "unnecessary_stop_rate": 0.08333333333333333,
+    "unnecessary_stops": 64,
+    "unsafe_turn_state_indices": []
+  },
+  "sensor-stopping-v2@0.001": {
+    "false_negatives": 0,
+    "mean_safe_progress_score": 0.3428615536146903,
+    "states": 768,
+    "unnecessary_stop_rate": 0.08072916666666667,
+    "unnecessary_stops": 62,
+    "unsafe_turn_state_indices": []
+  },
+  "sensor-stopping-v2@0.002": {
+    "false_negatives": 0,
+    "mean_safe_progress_score": 0.34598337087164494,
+    "states": 768,
+    "unnecessary_stop_rate": 0.07682291666666667,
+    "unnecessary_stops": 59,
+    "unsafe_turn_state_indices": []
+  },
+  "sensor-stopping-v2@0.005": {
+    "false_negatives": 0,
+    "mean_safe_progress_score": 0.34830574101495543,
+    "states": 768,
+    "unnecessary_stop_rate": 0.0703125,
+    "unnecessary_stops": 54,
+    "unsafe_turn_state_indices": []
+  },
+  "sensor-stopping-v2@0.01": {
+    "false_negatives": 0,
+    "mean_safe_progress_score": 0.34975769054966976,
+    "states": 768,
+    "unnecessary_stop_rate": 0.0703125,
+    "unnecessary_stops": 54,
+    "unsafe_turn_state_indices": []
+  }
+}

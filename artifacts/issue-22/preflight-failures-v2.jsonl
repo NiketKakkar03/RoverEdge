@@ -1,0 +1,3 @@
+{"backend": "native-accelerate", "command_disagreements": 0, "maximum_pacing_overrun_s": 0.026180917004239745, "pacing_overruns": 1}
+{"backend": "native-accelerate", "command_disagreements": 0, "maximum_pacing_overrun_s": 0.15245541698823217, "pacing_overruns": 5}
+{"backend": "native-accelerate", "command_disagreements": 0, "maximum_pacing_overrun_s": 0.02713595899695065, "pacing_overruns": 1}

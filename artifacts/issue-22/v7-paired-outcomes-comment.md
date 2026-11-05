@@ -1,0 +1,5 @@
+Supplemental v7 paired outcome export is now available at `artifacts/issue-22/execution-v7/paired-outcomes.json` and through `GET /api/evaluations/held-out`. It was computed solely from the retained 180-row run index after execution; no final family was rerun.
+
+For each modeled load condition, 20 matched scenario-index/family pairs compare latest-pending with FIFO. Completion-rate difference was 0 in all three conditions, with 20 ties per condition and a paired bootstrap 95% interval of [0, 0] (10,000 resamples, seed 20261102). All four native backends completed five open-family missions each; all narrow and cluttered missions timed out. The export preserves timing provenance labels.
+
+The refreshed evidence manifest now hashes 185 files, including `paired-outcomes.json` with SHA-256 `6927b397cdd9d6cf0db14298fc632794ba550cc09edc9e83d79369308f1faad2`. This supersedes the earlier comment's count of 184 files; the original report and run bundles were not changed. The frozen quality result remains failed and Issue #22 remains open.

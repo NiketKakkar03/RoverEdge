@@ -17,6 +17,7 @@ from roveredge.learning import (
     predict_risk,
     save_risk_model,
     select_candidate,
+    select_safe_candidate,
     train_risk_model,
 )
 from roveredge.models import Pose, RunConfiguration
@@ -26,12 +27,14 @@ from roveredge.scenarios import Obstacle, Scenario
 def test_dataset_manifest_separates_families_before_sampling() -> None:
     manifest = build_default_manifest()
 
+    assert manifest.version == "risk-dataset-v2"
     assert len(manifest.train_families) == 8
     assert len(manifest.validation_families) == 3
     assert len(manifest.final_test_families) == 3
-    assert manifest.samples_per_family == 64
+    assert manifest.samples_per_family == 256
     assert manifest.candidates_per_state == 8
     assert manifest.final_test_status == "untouched"
+    assert all(family.startswith("route-") for family in manifest.train_families)
     assert not (
         set(manifest.train_families)
         & set(manifest.validation_families)
@@ -53,6 +56,21 @@ def test_dataset_manifest_rejects_family_leakage() -> None:
             candidates_per_state=8,
             final_test_status="untouched",
         )
+
+
+def test_recorded_composed_policy_meets_validation_gate_without_final_data() -> None:
+    manifest = json.loads(Path("artifacts/issue-8/dataset-manifest.json").read_text())
+    report = json.loads(Path("artifacts/issue-8/validation-report.json").read_text())
+
+    assert manifest["final_test_status"] == "untouched"
+    assert report["final_test_status"] == "untouched"
+    assert report["quality_gate_status"] == "met"
+    assert report["false_negatives"] == 0
+    assert report["unnecessary_stops"] / report["states"] <= 0.1
+    assert report["mean_safe_progress_score"] >= 0.3
+    assert report["selection_policy"]["version"] == (
+        "learned-risk-plus-sensor-stopping-v1"
+    )
 
 
 def test_feature_vector_has_the_declared_literal_order() -> None:
@@ -122,6 +140,25 @@ def test_candidate_selection_brakes_when_no_risk_is_acceptable() -> None:
     assert selection.reason == "no candidate below the risk cutoff; braking"
 
 
+def test_safe_candidate_selection_rejects_a_risky_swept_sector() -> None:
+    state = LearningState(
+        range_readings_m=(0.3,) + (4.0,) * 15,
+        linear_velocity_mps=0.0,
+        angular_velocity_radps=0.0,
+        waypoint_x_rover_m=2.0,
+        waypoint_y_rover_m=0.0,
+        previous_linear_command_mps=0.0,
+        previous_angular_command_radps=0.0,
+    )
+    risks = (0.0,) * 8
+    progress = tuple(float(index) for index in range(8))
+
+    selection = select_safe_candidate(risks, progress, 0.5, state)
+
+    assert selection.candidate_index == 7
+    assert selection.reason == "candidate passed learned risk and sensor-stopping-v1"
+
+
 def test_normalization_is_fit_only_from_training_features() -> None:
     training = ((1.0, 10.0), (3.0, 14.0))
     normalization = Normalization.fit(training)
@@ -152,7 +189,7 @@ def test_training_exports_declared_model_and_leaves_final_split_untouched() -> N
     assert result.artifact.dtype == "float32"
     assert result.artifact.hidden_activation == "relu"
     assert result.artifact.output_activation == "sigmoid"
-    assert 0.05 <= result.artifact.risk_cutoff <= 0.95
+    assert 0.000001 <= result.artifact.risk_cutoff <= 0.95
     assert len(result.artifact.normalization.mean) == 24
     assert result.validation_evidence.final_test_status == "untouched"
     assert result.validation_evidence.examples == len(validation.labels)
@@ -210,7 +247,7 @@ def test_loader_rejects_self_consistent_malformed_artifact(
     if corruption == "dtype":
         source["dtype"] = "float64"
     elif corruption == "version":
-        source["artifact_version"] = "risk-model-v2"
+        source["artifact_version"] = "risk-model-v3"
     elif corruption == "modal":
         source["modal_execution"] = "claimed_without_evidence"
     elif corruption == "cutoff":

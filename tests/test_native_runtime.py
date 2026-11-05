@@ -1,3 +1,4 @@
+import gc
 import math
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
@@ -208,6 +209,30 @@ def test_native_runtime_prevents_overlapping_workspace_use(
     assert rejected
     assert all(result == expected for result in completed)
     assert all("workspace is already in use" in str(error) for error in rejected)
+
+
+def test_parallel_runtime_reuses_its_workers_across_repeated_inference_and_shutdown() -> None:
+    artifact = load_risk_model(Path("artifacts/issue-8/risk-model-v1.json"))
+    parallel = NativeRiskModel(artifact, backend="native-parallel-blocked", worker_count=4)
+    reference = NativeRiskModel(artifact, backend="native-blocked")
+    batch = tuple(
+        tuple(float(row + column) / 10 for column in range(24)) for row in range(8)
+    )
+    expected = reference.evaluate(batch)
+    progress = tuple(float(index) / 10 for index in range(8))
+
+    for _ in range(100):
+        actual = parallel.evaluate(batch)
+        assert actual.logits == pytest.approx(expected.logits, rel=1e-4, abs=1e-5)
+        assert actual.scores == pytest.approx(expected.scores, rel=1e-4, abs=1e-5)
+        assert select_candidate(
+            actual.scores, progress, artifact.risk_cutoff
+        ).candidate_index == select_candidate(
+            expected.scores, progress, artifact.risk_cutoff
+        ).candidate_index
+
+    del parallel
+    gc.collect()
 
 
 @pytest.mark.parametrize("corruption", ["shape", "normalization", "bias"])

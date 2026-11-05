@@ -1,0 +1,42 @@
+{
+  "schema": "roveredge-held-out-protocol-freeze-v1",
+  "approval_status": "approved_frozen",
+  "execution_status": "not_run",
+  "approval_record": {
+    "authority": "user_explicit",
+    "approved_on": "2026-11-02",
+    "approved_methodology": "paired virtual and native closed-loop evaluation with a deterministic final mission-scenario generator"
+  },
+  "proposal_path": "artifacts/issue-22/proposed-held-out-protocol-v1.json",
+  "proposal_sha256": "811adaa63cabb3622428af8dbd479f7da1998f519a9e3212caf4206842c72775",
+  "frozen_candidate_inputs": {
+    "dataset_manifest_file_sha256": "c3144ae012081848fd22aeb8ac612ab6d178eeb8b94dc862255c40f53a18bfee",
+    "final_test_families": [
+      "route-final-family-00",
+      "route-final-family-01",
+      "route-final-family-02"
+    ],
+    "final_test_split_sha256": "310bb166c8f4dddec97ecbee52504ba416b6d5ef79458a003ca78cf949623f5c",
+    "model_artifact_file_sha256": "2812484a022f541bbb3ede63c1a63e58bf986f73c500f606c5dbf351ba88f005",
+    "model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
+    "risk_cutoff": 0.0001,
+    "selection_policy_version": "learned-risk-plus-sensor-stopping-v1",
+    "safety_envelope_version": "sensor-stopping-v1",
+    "mission_scenario_generator_version": "held-out-mission-scenario-generator-v1"
+  },
+  "acceptance_criteria": {
+    "maximum_false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3,
+    "numerical_tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(native naive)",
+    "maximum_command_disagreements": 0,
+    "native_pacing_overrun_limit_s": 0.02
+  },
+  "scheduled_work": {
+    "virtual_runs": 120,
+    "native_closed_loop_runs": 60,
+    "saved_input_batches_per_backend_per_repetition": 1000,
+    "saved_input_repetitions": 3
+  },
+  "execution_rule": "Run the frozen schedule without tuning, substitutions, or early favorable or unfavorable stopping. Stop only for invalid evidence, configuration drift, infrastructure failure, or a failed prerequisite gate; retain and report every completed result and failure."
+}

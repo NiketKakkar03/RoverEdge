@@ -1,0 +1,37 @@
+{
+  "schema": "roveredge-held-out-protocol-freeze-v5",
+  "approval_status": "approved_frozen",
+  "execution_status": "not_run",
+  "approval_record": {
+    "authority": "user_explicit_continuation",
+    "approved_on": "2026-11-02",
+    "request": "Implement in a separate thread and run again to finish Issue 22"
+  },
+  "proposal_sha256": "b861a459b2470052be051e217d8832ec2d3a4e6da21dbbea93c8fbad1baba6b1",
+  "held_out_manifest_file_sha256": "5ddc35d6877d50c50af6553d5b947f28de5700237130dd04b0f26540d3a11ba0",
+  "model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
+  "risk_cutoff": 0.0001,
+  "selection_policy_version": "learned-risk-plus-sensor-stopping-v1",
+  "safety_envelope_version": "sensor-stopping-v1",
+  "mission_scenario_generator_version": "held-out-mission-scenario-generator-v5",
+  "parallel_runtime": "persistent-model-owned-worker-pool-v1",
+  "final_test_families": [
+    "route-final-refresh4-family-00",
+    "route-final-refresh4-family-01",
+    "route-final-refresh4-family-02"
+  ],
+  "acceptance_criteria": {
+    "maximum_false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3,
+    "numerical_tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(native naive)",
+    "maximum_command_disagreements": 0,
+    "native_pacing_overrun_limit_s": 0.02
+  },
+  "scheduled_work": {
+    "virtual_runs": 120,
+    "native_closed_loop_runs": 60,
+    "saved_input_batches_per_backend_per_repetition": 1000,
+    "saved_input_repetitions": 3
+  }
+}

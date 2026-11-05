@@ -28,37 +28,37 @@
     "previous_angular_command_radps"
   ],
   "final_test_families": [
-    "final-family-00",
-    "final-family-01",
-    "final-family-02"
+    "route-final-family-00",
+    "route-final-family-01",
+    "route-final-family-02"
   ],
   "final_test_status": "untouched",
   "generated_row_hashes": {
-    "train": "99811006663e428ba40babe17891702713f2633029f61e9e06cdb7fec61df7dc",
-    "validation": "f021f1964225596abde144f4e6018d395672198f1bc1925b6060c0ccb366fa2d"
+    "train": "e71d29f5ff5634a01f1b2e6bc16017f8bbde4487bd6b7424b02e50848f2f5881",
+    "validation": "613a3f09f243e2ee0a29898be3d72657d005979e5b8849e8e19473f4f5222919"
   },
   "generator_version": "synthetic-risk-generator-v1",
   "label_contract": "collision during immediate one-second rollout",
-  "samples_per_family": 64,
+  "samples_per_family": 256,
   "split_hashes": {
-    "final_test": "56bce9ceffeaeb7026e6ff97610583162d0f9ae569a3034be25d797e90ad01cb",
-    "train": "918c46b49310f4ae1f187a16ac09fa27aaa876a6373fda43bd519f79ec338b80",
-    "validation": "de1cdb76742ffd35a38bcdd538341818cb18270906b4f6b014d5220bd855f62e"
+    "final_test": "310bb166c8f4dddec97ecbee52504ba416b6d5ef79458a003ca78cf949623f5c",
+    "train": "167209c3857e50a8ac0325115d83eff73fa023f977e37788b71a48577c311db4",
+    "validation": "e0777c8e1991ac68edb5d350048138ab6c5769bff449cf5076675492b8720d8f"
   },
   "train_families": [
-    "train-family-00",
-    "train-family-01",
-    "train-family-02",
-    "train-family-03",
-    "train-family-04",
-    "train-family-05",
-    "train-family-06",
-    "train-family-07"
+    "route-train-family-00",
+    "route-train-family-01",
+    "route-train-family-02",
+    "route-train-family-03",
+    "route-train-family-04",
+    "route-train-family-05",
+    "route-train-family-06",
+    "route-train-family-07"
   ],
   "validation_families": [
-    "validation-family-00",
-    "validation-family-01",
-    "validation-family-02"
+    "route-validation-family-00",
+    "route-validation-family-01",
+    "route-validation-family-02"
   ],
-  "version": "risk-dataset-v1"
+  "version": "risk-dataset-v2"
 }

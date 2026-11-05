@@ -1,0 +1,27 @@
+{
+  "final_test_status": "untouched",
+  "model_artifact_file_sha256": "8323d43e1ca7b9c78e3eec135e54d426869f09fe909682631ff491f4d66d14ce",
+  "model_sha256": "2ea59b362c2eb275608b72874ed6f9397c79be78829840faf649fe12bd735eee",
+  "risk_cutoff": 0.005,
+  "safety_envelope": {
+    "horizon_s": 1.0,
+    "max_braking_deceleration_mps2": 1.2,
+    "max_linear_acceleration_mps2": 0.8,
+    "rover_radius_m": 0.2,
+    "sparse_sensor_margin_m": 0.2,
+    "swept_ray_neighbors": 2,
+    "version": "sensor-stopping-v2"
+  },
+  "schema": "roveredge-issue22-validation-candidate-v2",
+  "selection_policy_version": "learned-risk-plus-sensor-stopping-v2",
+  "source_model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
+  "status": "validation_passed_final_untouched",
+  "validation_metrics": {
+    "false_negatives": 0,
+    "mean_safe_progress_score": 0.34830574101495543,
+    "states": 768,
+    "unnecessary_stop_rate": 0.0703125,
+    "unnecessary_stops": 54,
+    "unsafe_turn_state_indices": []
+  }
+}

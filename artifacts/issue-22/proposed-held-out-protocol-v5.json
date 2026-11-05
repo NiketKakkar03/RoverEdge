@@ -1,0 +1,44 @@
+{
+  "schema": "roveredge-held-out-protocol-v5",
+  "approval_status": "approved_by_user_continuation",
+  "execution_status": "not_run",
+  "frozen_candidate_inputs": {
+    "held_out_manifest_path": "artifacts/issue-22/held-out-manifest-v5.json",
+    "held_out_manifest_file_sha256": "5ddc35d6877d50c50af6553d5b947f28de5700237130dd04b0f26540d3a11ba0",
+    "final_test_families": [
+      "route-final-refresh4-family-00",
+      "route-final-refresh4-family-01",
+      "route-final-refresh4-family-02"
+    ],
+    "final_test_split_sha256": "090360cedc7951c4436945bab1c5d2559d222406d30d0e511be100592441ed97",
+    "model_artifact_file_sha256": "2812484a022f541bbb3ede63c1a63e58bf986f73c500f606c5dbf351ba88f005",
+    "model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
+    "risk_cutoff": 0.0001,
+    "selection_policy_version": "learned-risk-plus-sensor-stopping-v1",
+    "safety_envelope_version": "sensor-stopping-v1",
+    "mission_scenario_generator_version": "held-out-mission-scenario-generator-v5",
+    "parallel_runtime": "persistent-model-owned-worker-pool-v1",
+    "native_planning_clock": "std::chrono::steady_clock",
+    "native_planning_policy": "macOS THREAD_TIME_CONSTRAINT_POLICY accepted"
+  },
+  "acceptance_criteria": {
+    "maximum_false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3,
+    "numerical_tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(native naive)",
+    "maximum_command_disagreements": 0,
+    "native_pacing_overrun_limit_s": 0.02
+  },
+  "scheduled_work": {
+    "virtual_runs": 120,
+    "native_closed_loop_runs": 60,
+    "saved_input_batches_per_backend_per_repetition": 1000,
+    "saved_input_repetitions": 3
+  },
+  "preflight": "All backends passed; parallel backend additionally passed a full 120-second non-final soak with zero pacing overruns and disagreements.",
+  "stopping_rules": [
+    "No outcome-based early stopping.",
+    "Stop for invalid evidence, drift, infrastructure failure, failed prerequisites, or user interruption.",
+    "Retain every completed artifact and do not tune from final results."
+  ]
+}

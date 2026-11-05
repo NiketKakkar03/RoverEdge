@@ -128,6 +128,9 @@ class RunConfiguration:
     model_sha256: str | None = None
     risk_cutoff: float | None = None
     candidate_set_id: str | None = None
+    safety_envelope_version: Literal["sensor-stopping-v1", "sensor-stopping-v2"] = (
+        "sensor-stopping-v1"
+    )
     execution_mode: ExecutionMode = "synchronous"
     pacing_overrun_limit_s: float = 0.02
     modeled_device: ModeledDeviceProfile = ModeledDeviceProfile()

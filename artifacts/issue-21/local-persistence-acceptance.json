@@ -1,0 +1,17 @@
+{
+  "schema": "roveredge-local-persistence-acceptance-v1",
+  "checked_on": "2026-10-30",
+  "artifact_store": ".roveredge/hosted-artifacts",
+  "deployment_kind": "local_process_restart",
+  "execution_label": "live_hosted",
+  "run_id": "6f45fb51-7edd-4790-bcaa-5d341aa92859",
+  "mission_outcome": "completed",
+  "test_verdict": "passed",
+  "identity_preserved_after_restart": true,
+  "remote_deployment_gate": "not_run",
+  "limitations": [
+    "This verifies local atomic persistence across an application restart only.",
+    "No Modal deployment or persistent Modal Volume was available in the process environment.",
+    "No provider credentials or provider calls were used."
+  ]
+}

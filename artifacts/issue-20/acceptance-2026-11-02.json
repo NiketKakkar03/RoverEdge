@@ -1,0 +1,25 @@
+{
+  "schema": "roveredge-evidence-bundle-acceptance-v1",
+  "checked_on": "2026-11-02",
+  "representative_bundle": "artifacts/issue-23/queue-policy-comparison.zip",
+  "reproduction": {
+    "command": "uv run python scripts/reproduce_evidence.py artifacts/issue-23/queue-policy-comparison.zip",
+    "verified_run_count": 2
+  },
+  "focused_checks": {
+    "evidence_and_demo_tests": "6 passed",
+    "browser_download_tests": "22 passed"
+  },
+  "full_check": {
+    "command": "make check",
+    "python_tests": "159 passed in 30.94s",
+    "mypy": "Success: no issues found in 22 source files",
+    "ruff": "All checks passed",
+    "browser_tests": "22 passed",
+    "web_build": "passed"
+  },
+  "limitations": [
+    "The representative bundle uses modeled queue-policy evidence and makes no live provider request.",
+    "The acceptance record contains no credential values, authorization headers, signed URLs, or provider responses."
+  ]
+}

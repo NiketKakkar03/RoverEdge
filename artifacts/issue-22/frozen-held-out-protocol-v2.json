@@ -1,0 +1,38 @@
+{
+  "schema": "roveredge-held-out-protocol-freeze-v2",
+  "approval_status": "approved_frozen",
+  "execution_status": "not_run",
+  "approval_record": {
+    "authority": "user_explicit_continuation",
+    "approved_on": "2026-11-02",
+    "request": "Complete all implementation steps one by one until Issue #22 can be marked complete."
+  },
+  "proposal_path": "artifacts/issue-22/proposed-held-out-protocol-v2.json",
+  "proposal_sha256": "855e711c56b125cf72f60303e7eb362fe96e063b4475463b57972301a5810560",
+  "held_out_manifest_file_sha256": "a726be29bfb5daaa88fe452c26fb8cd0569926dbfa68c671ced272acbad810e5",
+  "model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
+  "risk_cutoff": 0.0001,
+  "selection_policy_version": "learned-risk-plus-sensor-stopping-v1",
+  "safety_envelope_version": "sensor-stopping-v1",
+  "mission_scenario_generator_version": "held-out-mission-scenario-generator-v2",
+  "final_test_families": [
+    "route-final-refresh1-family-00",
+    "route-final-refresh1-family-01",
+    "route-final-refresh1-family-02"
+  ],
+  "acceptance_criteria": {
+    "maximum_false_negatives": 0,
+    "maximum_unnecessary_stop_rate": 0.1,
+    "minimum_mean_safe_progress_score": 0.3,
+    "numerical_tolerance": "abs(error) <= 1e-5 + 1e-4 * abs(native naive)",
+    "maximum_command_disagreements": 0,
+    "native_pacing_overrun_limit_s": 0.02
+  },
+  "scheduled_work": {
+    "virtual_runs": 120,
+    "native_closed_loop_runs": 60,
+    "saved_input_batches_per_backend_per_repetition": 1000,
+    "saved_input_repetitions": 3
+  },
+  "execution_rule": "Run only after the all-backend non-final pacing preflight passes. Preserve the exact schedule and stop immediately only under the frozen stopping rules."
+}

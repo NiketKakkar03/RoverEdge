@@ -4,9 +4,9 @@ RoverEdge is a software experimentation environment for investigating how comput
 
 The current implementation includes deterministic inspection-and-return missions, obstacle dynamics
 and failure evidence, an experimental learned collision-risk controller, and fresh naive,
-cache-blocked, and parallel blocked C++20 inference plus an Apple Accelerate comparison. SAM
-grounding remains deferred pending live provider verification, and delayed-inference modeling is not
-implemented yet.
+cache-blocked, and parallel blocked C++20 inference plus an Apple Accelerate comparison. It also
+includes explicit virtual queue/freshness/memory modeling and a bounded, zero-provider-call recorded
+mission-engineer fixture. Live SAM/provider verification remains manual-only.
 
 ## Run locally
 
@@ -54,3 +54,24 @@ Each run preserves its scenario version, seed, configuration, declared expectati
 inspection observation, mission outcome, and test verdict. Learned runs also freeze model, cutoff,
 candidate-set, and inference-backend identity. Repeating identical input reproduces canonical
 evidence; the unique run identifier is intentionally different.
+
+## Demo and evaluation handoff
+
+The three-minute storyboard is in
+[docs/demo/three-minute-storyboard.md](docs/demo/three-minute-storyboard.md). Its queue-policy
+comparison is real local **modeled** evidence, regenerated and checked with:
+
+```sh
+uv run python scripts/create_demo_evidence.py
+uv run python scripts/reproduce_evidence.py artifacts/issue-23/queue-policy-comparison.zip
+```
+
+The held-out evaluation endpoint is `/api/evaluations/held-out`. It exposes the hash-checked frozen
+protocol and the retained execution state. The current v2 run is accurately reported as `stopped`:
+all 120 modeled virtual runs and four native runs were retained, but native pacing exceeded its
+frozen validity limit, so the remaining native work and saved-input replay were not executed.
+
+The public handoff also includes a
+[contribution/license register](docs/demo/contribution-and-license-register.md) and an
+[event-requirements check](docs/demo/event-requirements-check.md). The latter confirms the public
+deadline but leaves authenticated rule fields for a signed-in manual check.

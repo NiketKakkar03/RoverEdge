@@ -1,0 +1,3 @@
+# Preserve reproducible runs and freeze evaluation criteria
+
+Runs record fixed scenario versions, complete configurations, model identity, and timing provenance; controlled comparisons vary one factor, while exploratory comparisons disclose multiple changes without isolating a cause. Training and validation inform model settings and separately reviewed quality requirements, which are frozen before untouched final testing; mission outcome remains distinct from whether a test met its expected behavior. This adds artifact and evaluation discipline instead of allowing mutable scenes or post-result criteria, because reproducing a finding and explaining a genuine failure are core product requirements.

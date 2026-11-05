@@ -152,8 +152,8 @@ def test_browser_api_round_trips_configured_experiment_and_validity_evidence() -
     request["configuration"].update(
         {
             "model_artifact_version": "risk-model-v1",
-            "model_sha256": "045039400b09d297429ae8ef676e67a1095b24bd56beab414b5c88ae37391443",
-            "risk_cutoff": 0.05,
+            "model_sha256": "d4c43e7738508bb59a7ba87720b6f32b876a5270bf437f17988a9340e18ad2d9",
+            "risk_cutoff": 0.0001,
             "candidate_set_id": "fixed-eight-v1",
         }
     )

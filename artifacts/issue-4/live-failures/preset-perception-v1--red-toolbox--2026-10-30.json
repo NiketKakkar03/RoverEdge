@@ -1,0 +1,43 @@
+{
+  "request": {
+    "endpoint": "https://api.meta.ai/v1/responses",
+    "model": "sam-3.1",
+    "input": [
+      {
+        "role": "user",
+        "content_types": [
+          "input_text",
+          "input_image"
+        ]
+      }
+    ],
+    "target_phrase": "red toolbox",
+    "render_sha256": "d52abfeb4b2247bc4ad2529b705f99ef3f87f7500073c825226a941ffdb511c9",
+    "metadata": {
+      "mask_encoding": "one_bit",
+      "include_confidence": "true"
+    }
+  },
+  "evidence": {
+    "source": "live",
+    "status": "provider_unavailable",
+    "provider": "meta-model-api",
+    "model": "sam-3.1",
+    "parser_version": "meta-sam-parser-0.1.0",
+    "target_phrase": "red toolbox",
+    "render_sha256": "d52abfeb4b2247bc4ad2529b705f99ef3f87f7500073c825226a941ffdb511c9",
+    "render_width_px": 800,
+    "render_height_px": 600,
+    "duration_s": 0.0,
+    "raw_output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "matches": [],
+    "selected_match_ordinal": null,
+    "diagnostics": [
+      "MODEL_API_KEY is not set in the process"
+    ],
+    "request_id": null,
+    "camera_transform": null,
+    "derived_inspection_pose": null
+  },
+  "sanitized_raw_output": null
+}

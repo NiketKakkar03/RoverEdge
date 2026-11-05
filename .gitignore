@@ -1,4 +1,6 @@
 .env
+.rederive/
+.vscode/
 .roveredge/
 .mypy_cache/
 .pnpm-store/
@@ -10,3 +12,6 @@ dist/
 node_modules/
 build/
 src/roveredge/_native_runtime*.so
+artifacts/issue-22/.held-out-execution.lock
+artifacts/issue-22/execution/
+artifacts/issue-22/execution-v*/

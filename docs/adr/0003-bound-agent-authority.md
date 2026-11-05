@@ -1,0 +1,3 @@
+# Keep the mission engineer outside the driving and verdict loops
+
+The mission engineer prepares missions and autonomously investigates completed runs through validated tools, with at most three follow-up experiments changing permitted backend or queue settings. Deterministic software selects driving commands and evaluates frozen test criteria; the agent explains recorded outcomes and demonstrates comparisons without changing objectives or declaring unsupported success. This retains useful agent autonomy while preventing agent variability or changing criteria from confounding the runtime experiment; broader user configuration between tests does not expand agent authority.
