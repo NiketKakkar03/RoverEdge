@@ -11,6 +11,17 @@ shows an improvement.
 > An AI model may propose and explain an experiment. RoverEdge executes the experiment and decides
 > whether the evidence supports the conclusion.
 
+## Demo video
+
+<video controls width="100%" poster="docs/demo/roveredge-demo-poster.jpg">
+  <source src="docs/demo/roveredge-demo.mp4" type="video/mp4">
+  Your browser does not support embedded MP4 playback.
+</video>
+
+[![Watch the RoverEdge demo](docs/demo/roveredge-demo-poster.jpg)](docs/demo/roveredge-demo.mp4)
+
+_If your Markdown viewer does not display the embedded player, select the image to open the video._
+
 ## What the demo shows
 
 1. Run an inspection-and-return mission in the **Open inspection lane**.
