@@ -16,7 +16,13 @@ _ARTIFACT_WRITING_PATHS = frozenset({"/api/hosted/runs", "/api/hosted/saved-runs
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .uv_sync()
-    .env({"PYTHONPATH": "/root/src", "ROVEREDGE_ARTIFACT_DIR": ARTIFACT_MOUNT_PATH})
+    .env(
+        {
+            "PYTHONPATH": "/root/src",
+            "ROVEREDGE_ARTIFACT_DIR": ARTIFACT_MOUNT_PATH,
+            "ROVEREDGE_DEPLOYMENT_GATE": "modal_deployed",
+        }
+    )
     .add_local_dir("src", "/root/src")
     .add_local_dir("dist", "/root/dist")
 )

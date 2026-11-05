@@ -89,3 +89,11 @@ def test_portable_host_rejects_native_and_labels_apple_unavailable(tmp_path, mon
     assert status["credentials"] == "server_process_only"
     assert status["apple_accelerate_live"] == "unavailable_in_portable_hosting"
     assert status["accepted_secret_names"] == ["MODEL_API_KEY", "Baseten_API_KEY"]
+
+
+def test_hosting_status_reports_an_explicit_deployment_gate(monkeypatch) -> None:
+    monkeypatch.setenv("ROVEREDGE_DEPLOYMENT_GATE", "modal_deployed")
+
+    status = TestClient(app).get("/api/hosting/status").json()
+
+    assert status["deployment_gate"] == "modal_deployed"

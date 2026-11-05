@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from dataclasses import asdict
 from pathlib import Path
@@ -263,7 +264,7 @@ def create_live_investigation(request: LiveInvestigationRequest) -> LiveInvestig
 @app.get("/api/hosting/status")
 def hosting_status() -> dict[str, object]:
     return {
-        "deployment_gate": "not_run",
+        "deployment_gate": os.environ.get("ROVEREDGE_DEPLOYMENT_GATE", "not_run"),
         "artifact_store": "ROVEREDGE_ARTIFACT_DIR",
         "credentials": "server_process_only",
         "accepted_secret_names": ["MODEL_API_KEY", "Baseten_API_KEY"],
